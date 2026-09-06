@@ -74,7 +74,10 @@ export default function ConnectionsScreen({ onBack }: ConnectionsScreenProps) {
         if (isTauri) {
           await openUrl(res.auth_url);
         } else {
-          window.open(res.auth_url, "_blank") || (window.location.href = res.auth_url);
+          const win = window.open(res.auth_url, "_blank");
+          if (!win) {
+            window.location.href = res.auth_url;
+          }
         }
       }
     } catch (err: unknown) {
