@@ -1,7 +1,10 @@
+<p align="center">
+  <img src="logo.png" alt="Personal Assistant Logo" width="160" />
+</p>
+
 # personal-assistant
 
-A voice-first personal assistant. Rust backend, Tauri 2 + React mobile app,
-PostgreSQL.
+A voice-first personal assistant. Rust backend, Tauri 2 + React mobile app, PostgreSQL.
 
 **Status: Milestone 0 — repository bootstrap.** There is no AI in this
 repository. No model provider, no Gmail, no Calendar, no memory engine, no voice.

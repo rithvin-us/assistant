@@ -8,7 +8,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
-import type { HealthResponse } from "./types";
+import { PROTOCOL_VERSION, type HealthResponse } from "./types";
 
 export type ProbeResult =
   | { state: "reachable"; health: HealthResponse; latencyMs: number }
@@ -28,13 +28,99 @@ export const SERVER_BASE_URL: string =
  */
 const DEV_TOKEN: string = import.meta.env.VITE_DEV_AUTH_TOKEN ?? "";
 
-export function probeServer(): Promise<ProbeResult> {
-  return invoke<ProbeResult>("probe_server", {
-    baseUrl: SERVER_BASE_URL,
-    token: DEV_TOKEN,
-  });
+const isTauri =
+  typeof window !== "undefined" &&
+  ("__TAURI_INTERNALS__" in window || "__TAURI_PATTERN__" in window || "__TAURI__" in window);
+
+/** Narrows an unknown thrown value to something displayable. */
+function reasonFrom(error: unknown, fallback: string): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  return fallback;
 }
 
-export function localCacheReady(): Promise<boolean> {
-  return invoke<boolean>("local_cache_ready");
+export async function probeServer(): Promise<ProbeResult> {
+  if (isTauri) {
+    try {
+      return await invoke<ProbeResult>("probe_server", {
+        baseUrl: SERVER_BASE_URL,
+        token: DEV_TOKEN,
+      });
+    } catch (error: unknown) {
+      return { state: "unreachable", reason: reasonFrom(error, "Tauri command failed") };
+    }
+  }
+
+  const start = performance.now();
+  try {
+    const res = await fetch(`${SERVER_BASE_URL}/v1/health`, {
+      headers: DEV_TOKEN ? { Authorization: `Bearer ${DEV_TOKEN}` } : {},
+    });
+    const latencyMs = Math.round(performance.now() - start);
+    if (!res.ok) {
+      return { state: "unreachable", reason: `HTTP status ${res.status}` };
+    }
+    const health: HealthResponse = await res.json();
+    return { state: "reachable", health, latencyMs };
+  } catch (error: unknown) {
+    return { state: "unreachable", reason: reasonFrom(error, "Server unreachable") };
+  }
+}
+
+export async function localCacheReady(): Promise<boolean> {
+  if (isTauri) {
+    try {
+      return await invoke<boolean>("local_cache_ready");
+    } catch {
+      return false;
+    }
+  }
+  // In a plain browser there is no Tauri shell and therefore no SQLite cache.
+  // Reporting `true` here would make the UI claim an offline buffer that does
+  // not exist; the sheet correctly shows "no local cache" instead.
+  return false;
+}
+
+/**
+ * Connection state, already reduced to what the UI shows.
+ *
+ * The reduction happens here rather than in a component so that Home can render
+ * a single dot without knowing about protocol versions or degraded databases.
+ */
+export interface ConnectionState {
+  kind: "checking" | "connected" | "offline";
+  /** Only meaningful when connected: the server is up *and* fully configured. */
+  healthy: boolean;
+  /** One line, shown in the tooltip and in the sheet. */
+  detail: string;
+}
+
+export async function loadConnection(): Promise<ConnectionState> {
+  const [probe, cacheReady] = await Promise.all([probeServer(), localCacheReady()]);
+
+  if (probe.state === "unreachable") {
+    return { kind: "offline", healthy: false, detail: probe.reason };
+  }
+
+  const { health, latencyMs } = probe;
+
+  // A mismatch means one side is an older build. Saying so beats letting a
+  // field silently deserialise to undefined somewhere further in.
+  if (health.protocol_version !== PROTOCOL_VERSION) {
+    return {
+      kind: "connected",
+      healthy: false,
+      detail: `Protocol mismatch: app v${PROTOCOL_VERSION}, server v${health.protocol_version}.`,
+    };
+  }
+
+  const parts = [`v${health.version}`, `${latencyMs} ms`];
+  if (health.status === "degraded") parts.push("no database");
+  if (!cacheReady) parts.push("no local cache");
+
+  return {
+    kind: "connected",
+    healthy: health.status === "ok" && cacheReady,
+    detail: parts.join(" - "),
+  };
 }

@@ -190,6 +190,14 @@ business logic out of React, which is the stated goal for the mobile layer.
 TypeScript wrapper. Streaming will need Tauri events rather than a returned value:
 the conversation WebSocket terminates in Rust and forwards frames to the webview.
 
+**Amendment (Milestone 0).** `bridge.ts` also carries a `fetch` fallback used
+only when the page is not running inside a Tauri webview, so `pnpm dev` in a
+plain browser is usable for styling work. It is a development convenience, not a
+second supported path: it needs the server's CORS origin list to include
+whatever port Vite is serving, and it has no access to the local SQLite cache.
+Shipped builds always take the Tauri command path. Components still must not call
+`fetch` directly -- the fallback lives behind the same `bridge.ts` functions.
+
 ---
 
 ## ADR-0009 — Development authentication is a static bearer token

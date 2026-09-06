@@ -1,159 +1,141 @@
 /**
  * Home.
  *
- * At this milestone Home's only real job is to answer one question honestly:
- * can this device reach the assistant server, and is that server healthy? The
- * attention feed, deadlines, free-time and quick capture take this slot later.
+ * One thing to do, one place to go. The microphone is the interface; everything
+ * else is behind a single small button. Status is a four-pixel dot rather than a
+ * card, because connection state is only interesting when it is wrong — and when
+ * it is wrong, the dot turns red and the sheet explains why.
+ *
+ * Deliberately absent: cards, counters, lists, a nav bar. They arrive when there
+ * is real information to put in them, not before.
  */
 
 import { useEffect, useState } from "react";
-import Alert from "@mui/material/Alert";
 import Box from "@mui/material/Box";
-import Button from "@mui/material/Button";
-import Chip from "@mui/material/Chip";
-import CircularProgress from "@mui/material/CircularProgress";
-import Paper from "@mui/material/Paper";
-import Stack from "@mui/material/Stack";
+import Fab from "@mui/material/Fab";
+import IconButton from "@mui/material/IconButton";
+import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import MicRoundedIcon from "@mui/icons-material/MicRounded";
+import MoreHorizRoundedIcon from "@mui/icons-material/MoreHorizRounded";
 
-import { SERVER_BASE_URL, localCacheReady, probeServer, type ProbeResult } from "../api/bridge";
-import { PROTOCOL_VERSION } from "../api/types";
+import { loadConnection, type ConnectionState } from "../api/bridge";
+import MoreSheet from "../components/MoreSheet";
 
-type Probe = { status: "loading" } | { status: "done"; result: ProbeResult };
-
-/** Gathers everything Home shows. Pure data in, no React state touched. */
-async function loadStatus(): Promise<{ result: ProbeResult; cacheReady: boolean }> {
-  const [result, cacheReady] = await Promise.all([probeServer(), localCacheReady()]);
-  return { result, cacheReady };
-}
+const CHECKING: ConnectionState = {
+  kind: "checking",
+  healthy: false,
+  detail: "Checking…",
+};
 
 export default function HomeScreen() {
-  const [probe, setProbe] = useState<Probe>({ status: "loading" });
-  const [cacheReady, setCacheReady] = useState<boolean | null>(null);
+  const [connection, setConnection] = useState<ConnectionState>(CHECKING);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
-  // The probe is an external system, so it is synchronised from an effect. State
-  // is only written from the promise callback, never synchronously in the effect
-  // body, and the cancellation flag stops a late response from writing to an
-  // unmounted component.
+  // State is written only from the promise callback, never synchronously in the
+  // effect body; the flag stops a late response reaching an unmounted component.
   useEffect(() => {
     let cancelled = false;
-
-    void loadStatus().then(({ result, cacheReady: ready }) => {
-      if (cancelled) return;
-      setProbe({ status: "done", result });
-      setCacheReady(ready);
+    void loadConnection().then((next) => {
+      if (!cancelled) setConnection(next);
     });
-
     return () => {
       cancelled = true;
     };
   }, []);
 
-  const recheck = () => {
-    setProbe({ status: "loading" });
-    setCacheReady(null);
-    void loadStatus().then(({ result, cacheReady: ready }) => {
-      setProbe({ status: "done", result });
-      setCacheReady(ready);
-    });
-  };
+  const dotColor =
+    connection.kind === "checking"
+      ? "text.disabled"
+      : connection.kind === "offline"
+        ? "error.main"
+        : connection.healthy
+          ? "success.main"
+          : "warning.main";
 
   return (
-    <Stack spacing={2.5}>
-      <Box>
-        <Typography variant="h1">Assistant</Typography>
+    <Box
+      sx={{
+        height: "100%",
+        display: "grid",
+        // Three rows: a near-empty header, the voice button centred in whatever
+        // space is left, and a single small control at the bottom.
+        gridTemplateRows: "auto 1fr auto",
+        justifyItems: "center",
+      }}
+    >
+      <Box
+        sx={{
+          width: "100%",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          pt: 1.5,
+          px: 0.5,
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Box
+            component="img"
+            src="/logo.png"
+            alt="Assistant Logo"
+            sx={{ width: 28, height: 28, borderRadius: "50%", objectFit: "contain" }}
+          />
+          <Typography variant="h6" color="text.primary" sx={{ fontSize: "1rem", fontWeight: 700 }}>
+            Assistant
+          </Typography>
+        </Box>
+        <Tooltip title={connection.detail}>
+          <Box
+            aria-label={`Server ${connection.kind}`}
+            sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: dotColor }}
+          />
+        </Tooltip>
+      </Box>
+
+      <Box
+        sx={{
+          alignSelf: "center",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 2.5,
+        }}
+      >
+        <Fab
+          color="primary"
+          aria-label="Hold to talk"
+          disabled
+          sx={{
+            width: 132,
+            height: 132,
+            // A wide, very soft ring instead of a shadow: it reads as presence
+            // rather than as elevation, and survives the dark ground.
+            boxShadow: (t) => `0 0 0 12px ${t.palette.primary.main}14`,
+            "& svg": { fontSize: 48 },
+          }}
+        >
+          <MicRoundedIcon />
+        </Fab>
+
         <Typography variant="body2" color="text.secondary">
-          Milestone 0 — foundation only. No model, no integrations.
+          Voice is not built yet
         </Typography>
       </Box>
 
-      <Paper sx={{ p: 2 }}>
-        <Typography variant="h2" gutterBottom>
-          Server
-        </Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
-          {SERVER_BASE_URL}
-        </Typography>
-
-        {probe.status === "loading" ? (
-          <Stack direction="row" spacing={1.5} sx={{ alignItems: "center" }}>
-            <CircularProgress size={18} />
-            <Typography variant="body2">Checking…</Typography>
-          </Stack>
-        ) : (
-          <ServerStatus result={probe.result} />
-        )}
-
-        <Button size="small" onClick={recheck} sx={{ mt: 1.5 }}>
-          Check again
-        </Button>
-      </Paper>
-
-      <Paper sx={{ p: 2 }}>
-        <Typography variant="h2" gutterBottom>
-          Local cache
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {cacheReady === null
-            ? "Checking…"
-            : cacheReady
-              ? "SQLite cache open. Offline capture will use it."
-              : "Unavailable. The app runs, but nothing can be captured offline."}
-        </Typography>
-      </Paper>
-
-      <Button
-        variant="contained"
-        size="large"
-        startIcon={<MicRoundedIcon />}
-        disabled
-        sx={{ py: 1.5 }}
+      <IconButton
+        aria-label="Everything else"
+        onClick={() => setSheetOpen(true)}
+        sx={{ mb: 3, color: "text.disabled" }}
       >
-        Voice — not built yet
-      </Button>
-    </Stack>
-  );
-}
+        <MoreHorizRoundedIcon />
+      </IconButton>
 
-function ServerStatus({ result }: { result: ProbeResult }) {
-  if (result.state === "unreachable") {
-    return (
-      <Alert severity="error" variant="outlined">
-        Unreachable. {result.reason}
-      </Alert>
-    );
-  }
-
-  const { health, latencyMs } = result;
-  // A protocol mismatch means one side is running an older build. Saying so is
-  // far more useful than letting a field silently deserialise to undefined.
-  const mismatch = health.protocol_version !== PROTOCOL_VERSION;
-
-  return (
-    <Stack spacing={1.5}>
-      <Stack direction="row" spacing={1} useFlexGap sx={{ flexWrap: "wrap" }}>
-        <Chip
-          size="small"
-          color={health.status === "ok" ? "success" : "warning"}
-          label={health.status === "ok" ? "Healthy" : "Degraded"}
-        />
-        <Chip size="small" variant="outlined" label={`v${health.version}`} />
-        <Chip size="small" variant="outlined" label={`${latencyMs} ms`} />
-      </Stack>
-
-      {health.status === "degraded" && (
-        <Typography variant="body2" color="text.secondary">
-          Server is up but has no database. Set DATABASE_URL to enable persistence.
-        </Typography>
-      )}
-
-      {mismatch && (
-        <Alert severity="warning" variant="outlined">
-          Protocol mismatch: app expects v{PROTOCOL_VERSION}, server speaks v
-          {health.protocol_version}.
-        </Alert>
-      )}
-    </Stack>
+      <MoreSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        connection={connection}
+      />
+    </Box>
   );
 }
