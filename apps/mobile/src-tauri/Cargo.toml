@@ -40,3 +40,7 @@ futures-util = "0.3"
 
 # Local offline cache. Deliberately not a mirror of the cloud schema.
 sqlx = { workspace = true, features = ["sqlite"] }
+
+# The shell's TLS trust anchors. See ADR-0031 and `http_client` in lib.rs.
+rustls.workspace = true
+webpki-roots.workspace = true

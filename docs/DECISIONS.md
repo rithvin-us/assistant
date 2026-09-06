@@ -1136,3 +1136,67 @@ be reconnected. `DEV_AUTH_TOKEN` and `CREDENTIAL_ENCRYPTION_KEY` must now be set
 in the Render dashboard before the first deploy; the service will not start
 without the first, and will fall back to the development key with a warning
 without the second.
+
+## ADR-0031 — The mobile shell trusts a bundled root store, not the platform verifier
+
+**Decision.** The Tauri shell's `reqwest` client is built with an explicit
+`rustls` configuration over the bundled Mozilla root set (`webpki-roots`),
+rather than the platform verifier `reqwest` selects by default.
+
+**Context.** The app reported "Demo Mode" against a healthy server. The
+connection dot never left `checking`, because `probe_server` never returned:
+
+```
+thread 'tokio-rt-worker' panicked at rustls-platform-verifier-0.6.2/src/android.rs:94:10:
+Expect rustls-platform-verifier to be initialized
+```
+
+`reqwest` 0.13's `rustls` feature pulls in `rustls-platform-verifier` and makes
+it the default certificate verifier. On Android that crate must first be handed
+the app's `Context` over JNI; a Tauri shell never does this, and uninitialised
+it panics rather than returning an error. The panic kills the task running the
+command, so the IPC call is never answered and the `invoke` promise cannot
+settle. `loadConnection` awaits it forever.
+
+Two things kept this hidden. Plain HTTP never reaches certificate
+verification, so while `VITE_SERVER_BASE_URL` pointed at a LAN address the
+probe failed quickly and honestly; only the move to an `https://` origin
+exposed it. And the failure mode is a hang, not an error, so the UI had nothing
+to display.
+
+The workspace already listed `webpki-roots` in `reqwest`'s feature list. That
+feature does not exist in `reqwest` 0.13: `webpki-roots` is an optional
+*dependency*, so naming it compiles the crate in and nothing more — no code in
+`reqwest` references it. The intent was already bundled roots; it simply had no
+effect.
+
+**Options.**
+1. Initialise `rustls-platform-verifier` over JNI from the Tauri shell.
+2. Configure `rustls` explicitly with the bundled Mozilla roots.
+3. Use the OS trust store via `rustls-native-certs`.
+
+**Chosen approach: option 2.**
+
+**Reason.** Option 1 keeps the OS trust store but requires the shell to reach
+into JNI for a `Context` during startup and to keep that working across Tauri
+upgrades — a platform-specific initialisation path whose failure mode is a
+panic in a background task, which is exactly what just cost a day. Option 3
+reads `/system/etc/security/cacerts`, whose layout Android has been moving into
+an APEX module, so it is not dependable across versions. Option 2 is the same
+trust decision the conversation socket already makes: `tokio-tungstenite` is
+configured with `rustls-tls-webpki-roots`. Both transports now trust the same
+anchors on every platform, and the shell has no JNI dependency.
+
+**Consequences.** The root store ships with the app and changes only when the
+app is rebuilt, so a root rotation requires a release; for a client that talks
+to one known host this is acceptable. Enterprise or user-installed CAs in the
+Android trust store are deliberately not honoured, which also means a device
+with a user-installed interception certificate cannot silently read this
+traffic. `rustls` and `webpki-roots` are declared in `[workspace.dependencies]`
+and the provider is pinned to `aws-lc-rs`, matching what `reqwest` enables, so
+the preconfigured config is the type `reqwest` expects.
+
+`ProbeResult` also carried `#[serde(rename_all = "camelCase")]`, which renames
+enum *variants* and not their fields. The shell sent `latency_ms` to a UI
+reading `latencyMs`, so the sheet rendered "undefined ms"; the enum now also
+sets `rename_all_fields`.

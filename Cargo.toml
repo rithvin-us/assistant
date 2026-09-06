@@ -58,6 +58,14 @@ anyhow = "1"
 # itself is fetched with the project's one HTTP client, `reqwest`.
 jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
 
+# TLS trust anchors for the mobile shell. reqwest 0.13 selects
+# `rustls-platform-verifier` by default, which on Android panics unless it is
+# initialised over JNI with the app's `Context`. The shell pins the bundled
+# Mozilla root set instead -- the same anchors `tokio-tungstenite` already
+# trusts for the conversation socket. See ADR-0031.
+rustls = { version = "0.23", default-features = false, features = ["std", "aws-lc-rs", "tls12"] }
+webpki-roots = "1"
+
 # Misc.
 async-trait = "0.1"
 futures = "0.3"

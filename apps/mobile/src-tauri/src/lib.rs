@@ -27,7 +27,14 @@ struct Shell {
 
 /// Result of a connectivity probe, shaped for direct rendering.
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase", tag = "state")]
+// `rename_all` renames the variants; the fields need `rename_all_fields`.
+// Without it `latency_ms` reaches a UI that reads `latencyMs` and the sheet
+// renders "undefined ms".
+#[serde(
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    tag = "state"
+)]
 enum ProbeResult {
     Reachable {
         health: HealthResponse,
@@ -87,6 +94,41 @@ async fn probe_server(
     }
 }
 
+/// Builds the shell's HTTP client.
+///
+/// The trust anchors are the bundled Mozilla root set rather than the platform
+/// verifier reqwest 0.13 selects by default. That verifier requires JNI
+/// initialisation with the Android `Context`; a Tauri shell never performs it,
+/// and uninitialised it panics inside the connector task:
+///
+/// ```text
+/// thread 'tokio-rt-worker' panicked at rustls-platform-verifier-0.6.2/src/android.rs:94:10:
+/// Expect rustls-platform-verifier to be initialized
+/// ```
+///
+/// A panicked command never answers its IPC call, so the UI waits on a promise
+/// that cannot settle -- the connection dot stays on "checking" forever instead
+/// of reporting a failure. Plain HTTP was unaffected, which is why this stayed
+/// hidden while the server was addressed over the LAN. `tokio_tungstenite`
+/// already trusts this same set for the conversation socket. See ADR-0031.
+fn http_client() -> reqwest::Client {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    let tls = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("aws-lc-rs supports the default protocol versions")
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+
+    reqwest::Client::builder()
+        .tls_backend_preconfigured(tls)
+        .build()
+        .expect("a client with a preconfigured rustls backend always builds")
+}
+
 /// Reports whether the offline cache is available.
 #[tauri::command]
 fn local_cache_ready(state: tauri::State<'_, Shell>) -> bool {
@@ -121,7 +163,7 @@ pub fn run() {
             };
 
             app.manage(Shell {
-                http: reqwest::Client::new(),
+                http: http_client(),
                 local,
             });
             app.manage(Arc::new(conversation::Connection::default()));
