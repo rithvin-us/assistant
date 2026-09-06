@@ -350,7 +350,7 @@ content, no prompt, no tool argument values.
 | `assistant-core/tests/orchestrator.rs` (34) | tool loop, streaming, persistence ordering, failed turns, fast path | nothing |
 | `assistant-server/tests/api.rs` (19) | the whole path over a real WebSocket | nothing |
 | `assistant-server/tests/conversations.rs` (10) | ordering, ownership, constraints, restart survival | `DATABASE_URL` |
-| `assistant-server/tests/durable_actions.rs` (24) | M3 approvals, unchanged | `DATABASE_URL` |
+| `assistant-server/tests/durable_actions.rs` (17) | M3 approvals, unchanged | `DATABASE_URL` |
 | `assistant-models/tests/live_anthropic.rs` (1) | one real streamed request | `ANTHROPIC_API_KEY`, `--ignored` |
 
 The provider tests run against a local socket speaking canned HTTP, written one
