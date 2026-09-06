@@ -46,23 +46,43 @@ export default function ConnectionsScreen({ onBack }: ConnectionsScreenProps) {
   const [disconnectTarget, setDisconnectTarget] = useState<AccountSummary | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  const loadAccounts = useCallback(async () => {
+  const loadAccounts = useCallback(async (silent = false) => {
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setErrorMessage(null);
       const list = await fetchGoogleAccounts();
       setAccounts(list);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to load accounts";
-      setErrorMessage(msg);
+      if (!silent) {
+        const msg = err instanceof Error ? err.message : "Failed to load accounts";
+        setErrorMessage(msg);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadAccounts();
+    let cancelled = false;
+
+    void loadAccounts(false);
+
+    const interval = setInterval(() => {
+      if (!cancelled) void loadAccounts(true);
+    }, 10000);
+
+    const onFocus = () => {
+      if (!cancelled) void loadAccounts(true);
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
   }, [loadAccounts]);
 
   const handleConnect = async () => {
@@ -146,7 +166,7 @@ export default function ConnectionsScreen({ onBack }: ConnectionsScreenProps) {
             </Typography>
           </Box>
         </Box>
-        <IconButton onClick={loadAccounts} size="small" sx={{ color: "#606060" }}>
+        <IconButton onClick={() => void loadAccounts(false)} size="small" sx={{ color: "#606060" }}>
           <RefreshRoundedIcon />
         </IconButton>
       </Box>

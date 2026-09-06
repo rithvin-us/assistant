@@ -64,22 +64,34 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
 
   useEffect(() => {
     let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      void (async () => {
-        try {
-          const res = await fetchNotes({
-            is_archived: noteArchiveFilter,
-            q: searchQuery || undefined,
-          });
-          if (!cancelled) setNotes(res);
-        } catch (err) {
-          console.warn("Failed to load notes:", err);
-        }
-      })();
-    });
+
+    const refreshNotes = async () => {
+      try {
+        const res = await fetchNotes({
+          is_archived: noteArchiveFilter,
+          q: searchQuery || undefined,
+        });
+        if (!cancelled) setNotes(res);
+      } catch (err) {
+        console.warn("Failed to load notes:", err);
+      }
+    };
+
+    void refreshNotes();
+
+    const interval = setInterval(() => {
+      void refreshNotes();
+    }, 10000);
+
+    const onFocus = () => void refreshNotes();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
     return () => {
       cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
     };
   }, [noteArchiveFilter, searchQuery]);
 

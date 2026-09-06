@@ -79,22 +79,36 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
 
   useEffect(() => {
     let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      void (async () => {
-        try {
-          const res = await fetchTasks({
-            status: taskStatusFilter === "ALL" ? undefined : taskStatusFilter,
-            q: searchQuery || undefined,
-          });
-          if (!cancelled) setTasks(res);
-        } catch (err) {
-          console.warn("Failed to load tasks:", err);
-        }
-      })();
-    });
+
+    const refreshTasks = async () => {
+      try {
+        const res = await fetchTasks({
+          status: taskStatusFilter === "ALL" ? undefined : taskStatusFilter,
+          q: searchQuery || undefined,
+        });
+        if (!cancelled) setTasks(res);
+      } catch (err) {
+        console.warn("Failed to load tasks:", err);
+      }
+    };
+
+    void refreshTasks();
+
+    // Auto-refresh every 10 seconds
+    const interval = setInterval(() => {
+      void refreshTasks();
+    }, 10000);
+
+    // Auto-refresh on window focus / tab switch
+    const onFocus = () => void refreshTasks();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
     return () => {
       cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
     };
   }, [taskStatusFilter, searchQuery]);
 

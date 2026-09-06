@@ -200,32 +200,51 @@ export default function GmailScreen({ onBack }: GmailScreenProps) {
   }, [selectedAccountId]);
 
   // Execute Search
-  const handleSearch = useCallback(async () => {
+  const handleSearch = useCallback(async (silent = false) => {
     if (!selectedAccountId) {
       setEmails([]);
       return;
     }
 
     try {
-      setLoading(true);
+      if (!silent) setLoading(true);
       setErrorMessage(null);
       // Default to "in:inbox" if empty so normal mailbox is shown first
       const queryToRun = searchQuery.trim() ? searchQuery.trim() : "in:inbox";
       const results = await searchGmail(selectedAccountId, queryToRun, 25);
       setEmails(results);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Gmail search failed";
-      setErrorMessage(msg);
+      if (!silent) {
+        const msg = err instanceof Error ? err.message : "Gmail search failed";
+        setErrorMessage(msg);
+      }
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [selectedAccountId, searchQuery]);
 
   useEffect(() => {
-    if (selectedAccountId) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      handleSearch();
-    }
+    if (!selectedAccountId) return;
+    let cancelled = false;
+
+    void handleSearch(false);
+
+    const interval = setInterval(() => {
+      if (!cancelled) void handleSearch(true);
+    }, 10000);
+
+    const onFocus = () => {
+      if (!cancelled) void handleSearch(true);
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
   }, [selectedAccountId, handleSearch]);
 
   // Open Email Detail
@@ -297,7 +316,7 @@ export default function GmailScreen({ onBack }: GmailScreenProps) {
             </Typography>
           </Box>
         </Box>
-        <IconButton onClick={handleSearch} size="small" sx={{ color: "#606060" }}>
+        <IconButton onClick={() => void handleSearch(false)} size="small" sx={{ color: "#606060" }}>
           <RefreshRoundedIcon />
         </IconButton>
       </Box>

@@ -183,56 +183,52 @@ export default function CalendarScreen({ onBack }: CalendarScreenProps) {
 
 
   // Load Events for Selected Account
-
-  const loadEvents = useCallback(async () => {
-
+  const loadEvents = useCallback(async (silent = false) => {
     if (!selectedAccountId) {
-
       setEvents([]);
-
-      setLoading(false);
-
+      if (!silent) setLoading(false);
       return;
-
     }
 
     try {
-
-      setLoading(true);
-
+      if (!silent) setLoading(true);
       setErrorMessage(null);
-
       const now = new Date();
-
       const minDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1).toISOString();
-
       const maxDate = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 14).toISOString();
-
       const list = await fetchCalendarEvents(selectedAccountId, minDate, maxDate);
-
       setEvents(list);
-
     } catch (err: unknown) {
-
-      const msg = err instanceof Error ? err.message : "Failed to load calendar events";
-
-      setErrorMessage(msg);
-
+      if (!silent) {
+        const msg = err instanceof Error ? err.message : "Failed to load calendar events";
+        setErrorMessage(msg);
+      }
     } finally {
-
-      setLoading(false);
-
+      if (!silent) setLoading(false);
     }
-
   }, [selectedAccountId]);
 
-
-
   useEffect(() => {
+    let cancelled = false;
 
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadEvents();
+    void loadEvents(false);
 
+    const interval = setInterval(() => {
+      if (!cancelled) void loadEvents(true);
+    }, 10000);
+
+    const onFocus = () => {
+      if (!cancelled) void loadEvents(true);
+    };
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
+    };
   }, [loadEvents]);
 
 
@@ -510,7 +506,7 @@ export default function CalendarScreen({ onBack }: CalendarScreenProps) {
 
         <Box sx={{ display: "flex", gap: 0.5 }}>
 
-          <IconButton onClick={loadEvents} size="small" sx={{ color: "#606060" }}>
+          <IconButton onClick={() => void loadEvents(false)} size="small" sx={{ color: "#606060" }}>
 
             <RefreshRoundedIcon />
 

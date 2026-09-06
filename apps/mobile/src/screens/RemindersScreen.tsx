@@ -61,22 +61,34 @@ export default function RemindersScreen({ onBack }: RemindersScreenProps) {
 
   useEffect(() => {
     let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      void (async () => {
-        try {
-          const res = await fetchReminders({
-            status: reminderStatusFilter === "ALL" ? undefined : reminderStatusFilter,
-            q: searchQuery || undefined,
-          });
-          if (!cancelled) setReminders(res);
-        } catch (err) {
-          console.warn("Failed to load reminders:", err);
-        }
-      })();
-    });
+
+    const refreshReminders = async () => {
+      try {
+        const res = await fetchReminders({
+          status: reminderStatusFilter === "ALL" ? undefined : reminderStatusFilter,
+          q: searchQuery || undefined,
+        });
+        if (!cancelled) setReminders(res);
+      } catch (err) {
+        console.warn("Failed to load reminders:", err);
+      }
+    };
+
+    void refreshReminders();
+
+    const interval = setInterval(() => {
+      void refreshReminders();
+    }, 10000);
+
+    const onFocus = () => void refreshReminders();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
     return () => {
       cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
     };
   }, [reminderStatusFilter, searchQuery]);
 

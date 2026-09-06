@@ -63,22 +63,34 @@ export default function IdeasScreen({ onBack }: IdeasScreenProps) {
 
   useEffect(() => {
     let cancelled = false;
-    queueMicrotask(() => {
-      if (cancelled) return;
-      void (async () => {
-        try {
-          const res = await fetchIdeas({
-            status: ideaStatusFilter === "ALL" ? undefined : ideaStatusFilter,
-            q: searchQuery || undefined,
-          });
-          if (!cancelled) setIdeas(res);
-        } catch (err) {
-          console.warn("Failed to load ideas:", err);
-        }
-      })();
-    });
+
+    const refreshIdeas = async () => {
+      try {
+        const res = await fetchIdeas({
+          status: ideaStatusFilter === "ALL" ? undefined : ideaStatusFilter,
+          q: searchQuery || undefined,
+        });
+        if (!cancelled) setIdeas(res);
+      } catch (err) {
+        console.warn("Failed to load ideas:", err);
+      }
+    };
+
+    void refreshIdeas();
+
+    const interval = setInterval(() => {
+      void refreshIdeas();
+    }, 10000);
+
+    const onFocus = () => void refreshIdeas();
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onFocus);
+
     return () => {
       cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onFocus);
     };
   }, [ideaStatusFilter, searchQuery]);
 
