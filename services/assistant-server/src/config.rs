@@ -66,7 +66,9 @@ impl Config {
     pub fn from_env() -> Result<Self, ConfigError> {
         let _ = dotenvy::dotenv();
 
-        let bind_addr = env_or("ASSISTANT_BIND_ADDR", "0.0.0.0:8787")
+        let port = env_or("PORT", "8787");
+        let default_bind = format!("0.0.0.0:{port}");
+        let bind_addr = env_or("ASSISTANT_BIND_ADDR", &default_bind)
             .parse()
             .map_err(|e| ConfigError::Invalid {
                 name: "ASSISTANT_BIND_ADDR",

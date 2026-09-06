@@ -14,23 +14,33 @@ export type ProbeResult =
   | { state: "reachable"; health: HealthResponse; latencyMs: number }
   | { state: "unreachable"; reason: string };
 
+export const isTauri =
+  typeof window !== "undefined" &&
+  ("__TAURI_INTERNALS__" in window || "__TAURI_PATTERN__" in window || "__TAURI__" in window);
+
 /**
  * Where the development server lives. Overridable at build time because an
  * Android device cannot reach the host's `localhost`.
  */
+const rawServerUrl = import.meta.env.VITE_SERVER_BASE_URL ?? "http://127.0.0.1:8787";
+
 export const SERVER_BASE_URL: string =
-  import.meta.env.VITE_SERVER_BASE_URL ?? "http://127.0.0.1:8787";
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1" ||
+    window.location.hostname === "tauri.localhost" ||
+    (isTauri && typeof window !== "undefined" && !/Android/i.test(navigator.userAgent)))
+    ? "http://127.0.0.1:8787"
+    : rawServerUrl;
 
 /**
  * Development bearer token. This is a placeholder credential for local work
  * only; real authentication replaces it, and no production secret ever belongs
  * in the frontend bundle.
  */
-export const DEV_TOKEN: string = import.meta.env.VITE_DEV_AUTH_TOKEN ?? "";
+export const DEV_TOKEN: string = import.meta.env.VITE_DEV_AUTH_TOKEN ?? "local-dev-token";
 
-export const isTauri =
-  typeof window !== "undefined" &&
-  ("__TAURI_INTERNALS__" in window || "__TAURI_PATTERN__" in window || "__TAURI__" in window);
+
 
 /** Narrows an unknown thrown value to something displayable. */
 function reasonFrom(error: unknown, fallback: string): string {

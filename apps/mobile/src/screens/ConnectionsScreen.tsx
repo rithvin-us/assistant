@@ -32,6 +32,9 @@ import {
   disconnectGoogleAccount,
 } from "../api/google";
 
+import { isTauri } from "../api/bridge";
+import { openUrl } from "@tauri-apps/plugin-opener";
+
 interface ConnectionsScreenProps {
   onBack?: () => void;
 }
@@ -68,7 +71,11 @@ export default function ConnectionsScreen({ onBack }: ConnectionsScreenProps) {
       setErrorMessage(null);
       const res = await startGoogleOAuth();
       if (res.auth_url) {
-        window.open(res.auth_url, "_blank");
+        if (isTauri) {
+          await openUrl(res.auth_url);
+        } else {
+          window.open(res.auth_url, "_blank") || (window.location.href = res.auth_url);
+        }
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to start Google OAuth";

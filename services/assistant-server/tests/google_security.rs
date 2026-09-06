@@ -9,7 +9,7 @@
 use assistant_protocol::{CalendarEvent, CreateEventRequest, EmailDetail, EmailSummary};
 use assistant_tools::{
     CalendarCreateTool, CalendarDeleteTool, CalendarListTool, CalendarProvider, GmailProvider,
-    GmailReadTool, GmailSearchTool, Tool, ToolError, providers::UpdateCalendarEvent,
+    GmailReadTool, GmailSearchTool, Tool,ToolError, providers::UpdateCalendarEvent,
 };
 use async_trait::async_trait;
 use std::sync::Arc;

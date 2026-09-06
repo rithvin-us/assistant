@@ -110,5 +110,10 @@ pub fn app(
                 )
             }),
         )
-        .layer(CorsLayer::new().allow_origin(origins))
+        .layer(
+            CorsLayer::new()
+                .allow_origin(origins)
+                .allow_headers(tower_http::cors::Any)
+                .allow_methods(tower_http::cors::Any),
+        )
 }

@@ -1,0 +1,30 @@
+# Render Blueprint Specification for Assistant Server
+services:
+  - type: web
+    name: assistant-server
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: Dockerfile
+    healthCheckPath: /v1/health
+    envVars:
+      - key: PORT
+        value: "8787"
+      - key: ASSISTANT_BIND_ADDR
+        value: "0.0.0.0:8787"
+      - key: DEV_AUTH_TOKEN
+        value: "local-dev-token"
+      - key: DATABASE_URL
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        value: "40057775148-caqgvopneq28f2ivsn2n9ra69e1pjsnd.apps.googleusercontent.com"
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URI
+        sync: false
+      - key: CREDENTIAL_ENCRYPTION_KEY
+        value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: ASSISTANT_ALLOWED_ORIGINS
+        value: "http://localhost:1420,http://127.0.0.1:1420,http://tauri.localhost,tauri://localhost"

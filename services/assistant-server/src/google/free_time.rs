@@ -176,7 +176,7 @@ mod tests {
             datetime!(2026-09-07 13:00:00 UTC),
         );
 
-        let slots = calculate_free_slots(&[event], start, end, 60, 0);
+        let slots = calculate_free_slots(&[event][..], start, end, 60, 0);
         assert_eq!(slots.len(), 2);
         assert_eq!(slots[0].start_time, start);
         assert_eq!(slots[0].end_time, datetime!(2026-09-07 12:00:00 UTC));
@@ -201,7 +201,7 @@ mod tests {
             datetime!(2026-09-07 13:00:00 UTC),
         );
 
-        let slots = calculate_free_slots(&[e1, e2], start, end, 60, 0);
+        let slots = calculate_free_slots(&[e1, e2][..], start, end, 60, 0);
         assert_eq!(slots.len(), 2);
         assert_eq!(slots[0].start_time, start);
         assert_eq!(slots[0].end_time, datetime!(2026-09-07 10:00:00 UTC));
@@ -223,7 +223,7 @@ mod tests {
         );
 
         // Gap is only 30 minutes, requested 60 minutes
-        let slots = calculate_free_slots(&[e1], start, end, 60, 0);
+        let slots = calculate_free_slots(&[e1][..], start, end, 60, 0);
         assert_eq!(slots.len(), 0);
     }
 
@@ -246,7 +246,7 @@ mod tests {
         );
 
         // Requested duration: 90 minutes
-        let slots = calculate_free_slots(&[e1, e2, e3], start, end, 90, 0);
+        let slots = calculate_free_slots(&[e1, e2, e3][..], start, end, 90, 0);
 
         // Expected:
         // 09:00-10:00 = 60 mins (<90 -> excluded)
@@ -276,7 +276,7 @@ mod tests {
             datetime!(2026-09-07 12:00:00 UTC),
         );
 
-        let slots = calculate_free_slots(&[e1, e2], start, end, 60, 0);
+        let slots = calculate_free_slots(&[e1, e2][..], start, end, 60, 0);
         assert_eq!(slots.len(), 2);
         assert_eq!(slots[0].end_time, datetime!(2026-09-07 10:00:00 UTC));
         assert_eq!(slots[1].start_time, datetime!(2026-09-07 12:00:00 UTC));
@@ -305,7 +305,7 @@ mod tests {
         );
 
         let slots = calculate_free_slots(
-            &[e_outside_before, e_span_start, e_span_end, e_outside_after],
+            &[e_outside_before, e_span_start, e_span_end, e_outside_after][..],
             start,
             end,
             60,
@@ -325,7 +325,7 @@ mod tests {
         let end = datetime!(2026-09-07 10:30:00 UTC);
 
         // No busy events, search 90 mins, duration 90 mins -> 1 exact slot
-        let slots = calculate_free_slots(&[], start, end, 90, 0);
+        let slots = calculate_free_slots(&[][..], start, end, 90, 0);
         assert_eq!(slots.len(), 1);
         assert_eq!(slots[0].start_time, start);
         assert_eq!(slots[0].end_time, end);
