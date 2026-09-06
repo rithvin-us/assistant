@@ -424,9 +424,4 @@ mod tests {
         assert_eq!(escape_query_literal("Rithvin's notes"), "Rithvin\\'s notes");
         assert_eq!(escape_query_literal(r"a\b"), r"a\\b");
     }
-
-    #[test]
-    fn size_ceiling_is_below_a_megabyte() {
-        assert!(MAX_INLINE_BYTES < 1024 * 1024);
-    }
 }

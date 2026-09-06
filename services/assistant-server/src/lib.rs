@@ -3,6 +3,7 @@
 //! The binary is a thin wrapper so that integration tests can build the same
 //! router and run it on an ephemeral port.
 
+pub mod academic;
 pub mod auth;
 pub mod config;
 pub mod conversations;

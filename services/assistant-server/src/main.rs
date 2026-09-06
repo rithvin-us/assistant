@@ -10,8 +10,10 @@ use assistant_core::{DomainEvent, EventBus, ToolRegistry};
 use assistant_models::ModelProvider;
 use assistant_server::{app, config::Config, db};
 use assistant_tools::{
-    CalendarCreateTool, CalendarDeleteTool, CalendarListTool, CalendarSearchTool,
-    CalendarUpdateTool, GmailReadTool, GmailSearchTool,
+    AcademicAssignmentsTool, AcademicDeadlinesTool, AcademicSyncTool, CalendarCreateTool,
+    CalendarDeleteTool, CalendarListTool, CalendarSearchTool, CalendarUpdateTool,
+    ClassroomAnnouncementsTool, ClassroomCoursesTool, ClassroomCourseworkTool, DriveListTool,
+    DriveMetadataTool, DriveReadFileTool, DriveSearchTool, GmailReadTool, GmailSearchTool,
 };
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -120,7 +122,33 @@ async fn main() -> anyhow::Result<()> {
         tool_registry.register(Arc::new(CalendarCreateTool::new(google_client.clone())));
         tool_registry.register(Arc::new(CalendarUpdateTool::new(google_client.clone())));
         tool_registry.register(Arc::new(CalendarDeleteTool::new(google_client.clone())));
-        tracing::info!("registered Google tools (gmail.*, calendar.*)");
+
+        // Milestone 6. `GoogleClient` implements the Classroom and Drive
+        // traits too, so the same authenticated, credential-decrypting client
+        // serves all four integrations.
+        let classroom: Arc<dyn assistant_tools::ClassroomProvider> = google_client.clone();
+        let drive: Arc<dyn assistant_tools::DriveProvider> = google_client.clone();
+
+        tool_registry.register(Arc::new(ClassroomCoursesTool::new(classroom.clone())));
+        tool_registry.register(Arc::new(ClassroomCourseworkTool::new(classroom.clone())));
+        tool_registry.register(Arc::new(ClassroomAnnouncementsTool::new(classroom.clone())));
+        tool_registry.register(Arc::new(DriveSearchTool::new(drive.clone())));
+        tool_registry.register(Arc::new(DriveListTool::new(drive.clone())));
+        tool_registry.register(Arc::new(DriveMetadataTool::new(drive.clone())));
+        tool_registry.register(Arc::new(DriveReadFileTool::new(drive)));
+
+        // The academic tools read the database as well as Google, so they get
+        // the service that owns both rather than the raw client.
+        let academic: Arc<dyn assistant_tools::AcademicProvider> = Arc::new(
+            assistant_server::academic::AcademicService::new(pool_ref.clone(), classroom),
+        );
+        tool_registry.register(Arc::new(AcademicDeadlinesTool::new(academic.clone())));
+        tool_registry.register(Arc::new(AcademicAssignmentsTool::new(academic.clone())));
+        tool_registry.register(Arc::new(AcademicSyncTool::new(academic)));
+
+        tracing::info!(
+            "registered Google tools (gmail.*, calendar.*, classroom.*, drive.*, academic.*)"
+        );
     }
 
     let router = app(

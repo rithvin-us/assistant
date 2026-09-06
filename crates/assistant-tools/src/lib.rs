@@ -100,15 +100,22 @@ pub enum ToolError {
     Failed(String),
 }
 
+pub mod academic_tools;
 pub mod google_tools;
 pub mod providers;
 
+pub use academic_tools::{
+    AcademicAssignmentsTool, AcademicDeadlinesTool, AcademicSyncTool, ClassroomAnnouncementsTool,
+    ClassroomCoursesTool, ClassroomCourseworkTool, DriveListTool, DriveMetadataTool,
+    DriveReadFileTool, DriveSearchTool,
+};
 pub use google_tools::{
     CalendarCreateTool, CalendarDeleteTool, CalendarListTool, CalendarSearchTool,
     CalendarUpdateTool, GmailReadTool, GmailSearchTool,
 };
 pub use providers::{
-    Announcement, CalendarEvent, CalendarProvider, ClassroomProvider, Course, CourseworkItem,
+    AcademicDeadline, AcademicOverview, AcademicProvider, AcademicSyncResult, Announcement,
+    CalendarEvent, CalendarProvider, ClassroomProvider, Course, CourseworkItem,
     CreateCalendarEvent, DriveFile, DriveFileContent, DriveProvider, EmailDetail, EmailSummary,
     FreeSlot, GmailProvider, UpdateCalendarEvent,
 };

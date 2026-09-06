@@ -3,6 +3,7 @@
 //! Routes are grouped by whether they need authentication. Only `/v1/health` and
 //! the OAuth callback are public.
 
+pub mod academic;
 pub mod conversation;
 pub mod google;
 pub mod health;
@@ -106,6 +107,21 @@ pub fn router(state: SharedState) -> Router {
             "/v1/google/calendar/free-slots",
             get(google::get_free_slots),
         )
+        // Classroom (read-only)
+        .route("/v1/classroom/courses", get(academic::list_courses))
+        .route("/v1/classroom/coursework", get(academic::list_coursework))
+        .route(
+            "/v1/classroom/announcements",
+            get(academic::list_announcements),
+        )
+        // Drive (read-only)
+        .route("/v1/drive/search", get(academic::search_drive))
+        .route("/v1/drive/files", get(academic::list_drive))
+        .route("/v1/drive/files/{id}", get(academic::drive_metadata))
+        .route("/v1/drive/files/{id}/content", get(academic::drive_read))
+        // Unified academic context
+        .route("/v1/academic/overview", get(academic::academic_overview))
+        .route("/v1/academic/sync", post(academic::academic_sync))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,

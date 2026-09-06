@@ -14,3 +14,7 @@ serde_json.workspace = true
 thiserror.workspace = true
 time = { workspace = true, features = ["serde-well-known"] }
 uuid = { workspace = true, features = ["serde"] }
+
+[dev-dependencies]
+# The tool tests drive async `execute` against in-crate stubs.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

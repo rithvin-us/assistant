@@ -180,3 +180,34 @@ pub trait DriveProvider: Send + Sync {
         file_id: &str,
     ) -> Result<DriveFileContent, ToolError>;
 }
+
+pub use assistant_protocol::{AcademicDeadline, AcademicOverview, AcademicSyncResult};
+
+/// The unified academic context: deadlines drawn from every source, and the
+/// synchronisation that imports coursework into tasks.
+///
+/// Backed by the database rather than by a single external API, which is why
+/// it is a separate trait from `ClassroomProvider`. The implementation lives in
+/// `assistant-server` next to the pool; `assistant-tools` stays free of sqlx.
+#[async_trait]
+pub trait AcademicProvider: Send + Sync {
+    /// Every outstanding academic deadline the user has, nearest first,
+    /// regardless of which source it came from.
+    async fn deadlines(
+        &self,
+        user_id: Uuid,
+        limit: i64,
+    ) -> Result<Vec<AcademicDeadline>, ToolError>;
+
+    /// Cached coursework for one account, optionally narrowed to a course.
+    async fn assignments(
+        &self,
+        account_id: Uuid,
+        user_id: Uuid,
+        course_external_id: Option<&str>,
+    ) -> Result<Vec<CourseworkItem>, ToolError>;
+
+    /// Refreshes one account from its provider and imports coursework into
+    /// tasks. Idempotent: running it twice does not create a second task.
+    async fn sync(&self, account_id: Uuid, user_id: Uuid) -> Result<AcademicSyncResult, ToolError>;
+}
