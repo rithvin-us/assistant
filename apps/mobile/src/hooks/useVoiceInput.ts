@@ -164,15 +164,21 @@ export function useVoiceInput(active: boolean): UseVoiceInputResult {
   }, [stopListening]);
 
   useEffect(() => {
-    if (active) {
-      void startListening();
-    } else {
-      void stopListening();
-    }
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled) return;
+      if (active) {
+        void startListening();
+      } else {
+        void stopListening();
+      }
+    });
     return () => {
+      cancelled = true;
       void stopListening();
     };
   }, [active, startListening, stopListening]);
+
 
   return {
     audioLevel,

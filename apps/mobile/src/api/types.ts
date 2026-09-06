@@ -109,3 +109,51 @@ export type ServerFrame =
   | { type: "tool_completed"; call_id: string; name: string; ok: boolean }
   | { type: "turn_end"; message_id: string }
   | { type: "error"; code: string; message: string };
+
+export interface TaskItem {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string;
+  priority: "P1" | "P2" | "P3" | "P4" | string;
+  status: "todo" | "completed" | "archived" | string;
+  due_at: string | null;
+  project: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string | null;
+}
+
+export interface ReminderItem {
+  id: string;
+  user_id: string;
+  task_id: string | null;
+  title: string;
+  remind_at: string;
+  status: "pending" | "handled" | "cancelled" | string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NoteItem {
+  id: string;
+  user_id: string;
+  title: string;
+  content: string;
+  is_archived: boolean;
+  tags: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IdeaItem {
+  id: string;
+  user_id: string;
+  title: string;
+  description: string;
+  status: "active" | "archived" | "converted" | string;
+  converted_task_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+

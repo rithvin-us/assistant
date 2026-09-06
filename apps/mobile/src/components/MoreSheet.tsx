@@ -18,33 +18,64 @@ import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Typography from "@mui/material/Typography";
+import LightbulbOutlinedIcon from "@mui/icons-material/LightbulbOutlined";
+import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
+import AlarmRoundedIcon from "@mui/icons-material/AlarmRounded";
 import ChecklistRoundedIcon from "@mui/icons-material/ChecklistRounded";
 import PsychologyRoundedIcon from "@mui/icons-material/PsychologyRounded";
 import EventRoundedIcon from "@mui/icons-material/EventRounded";
-import NotificationsRoundedIcon from "@mui/icons-material/NotificationsRounded";
 import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 
 import type { ConnectionState } from "../api/bridge";
-
-const FEATURES = [
-  { icon: <ChecklistRoundedIcon />, label: "Tasks", note: "schedule milestone" },
-  { icon: <EventRoundedIcon />, label: "Calendar", note: "schedule milestone" },
-  { icon: <PsychologyRoundedIcon />, label: "Memory", note: "memory milestone" },
-  { icon: <NotificationsRoundedIcon />, label: "Notifications", note: "attention milestone" },
-  { icon: <LinkRoundedIcon />, label: "Connections", note: "integrations milestone" },
-  { icon: <SettingsRoundedIcon />, label: "Settings", note: "not built yet" },
-];
+import type { ProductivityTab } from "../screens/ProductivityScreen";
 
 export default function MoreSheet({
   open,
   onClose,
   connection,
+  onSelectTab,
 }: {
   open: boolean;
   onClose: () => void;
   connection: ConnectionState;
+  onSelectTab: (tab: ProductivityTab) => void;
 }) {
+  const FEATURES = [
+    {
+      icon: <ChecklistRoundedIcon color="primary" />,
+      label: "Tasks",
+      note: "Standalone task management & priorities",
+      enabled: true,
+      tab: "tasks" as ProductivityTab,
+    },
+    {
+      icon: <AlarmRoundedIcon color="primary" />,
+      label: "Reminders",
+      note: "Scheduled reminders & notifications",
+      enabled: true,
+      tab: "reminders" as ProductivityTab,
+    },
+    {
+      icon: <DescriptionOutlinedIcon color="primary" />,
+      label: "Notes",
+      note: "Auto-saving notes & tags",
+      enabled: true,
+      tab: "notes" as ProductivityTab,
+    },
+    {
+      icon: <LightbulbOutlinedIcon color="primary" />,
+      label: "Ideas",
+      note: "Capture & convert ideas to tasks",
+      enabled: true,
+      tab: "ideas" as ProductivityTab,
+    },
+    { icon: <EventRoundedIcon />, label: "Calendar", note: "schedule milestone", enabled: false },
+    { icon: <PsychologyRoundedIcon />, label: "Memory", note: "memory milestone", enabled: false },
+    { icon: <LinkRoundedIcon />, label: "Connections", note: "integrations milestone", enabled: false },
+    { icon: <SettingsRoundedIcon />, label: "Settings", note: "not built yet", enabled: false },
+  ];
+
   return (
     <Drawer
       anchor="bottom"
@@ -60,7 +91,7 @@ export default function MoreSheet({
         },
       }}
     >
-      {/* Grab handle: the only affordance needed to say "drag or tap away". */}
+      {/* Grab handle */}
       <Box
         sx={{
           width: 36,
@@ -87,7 +118,17 @@ export default function MoreSheet({
 
       <List sx={{ px: 1, pb: 1 }}>
         {FEATURES.map((feature) => (
-          <ListItemButton key={feature.label} disabled sx={{ borderRadius: 2 }}>
+          <ListItemButton
+            key={feature.label}
+            disabled={!feature.enabled}
+            onClick={() => {
+              if (feature.enabled && feature.tab) {
+                onSelectTab(feature.tab);
+                onClose();
+              }
+            }}
+            sx={{ borderRadius: 2 }}
+          >
             <ListItemIcon sx={{ minWidth: 40 }}>{feature.icon}</ListItemIcon>
             <ListItemText primary={feature.label} secondary={feature.note} />
           </ListItemButton>
@@ -116,3 +157,4 @@ export default function MoreSheet({
     </Drawer>
   );
 }
+

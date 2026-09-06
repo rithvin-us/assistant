@@ -284,7 +284,11 @@ function ShaderCanvas({
 }: ShaderCanvasProps) {
   const canvasRef = React.useRef<HTMLCanvasElement>(null);
   const audioLevelRef = React.useRef(audioLevel);
-  audioLevelRef.current = audioLevel;
+
+  React.useEffect(() => {
+    audioLevelRef.current = audioLevel;
+  }, [audioLevel]);
+
 
   React.useEffect(() => {
     const canvas = canvasRef.current;

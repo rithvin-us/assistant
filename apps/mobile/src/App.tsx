@@ -16,40 +16,58 @@ import Fab from "@mui/material/Fab";
 import ChatBubbleOutlineRoundedIcon from "@mui/icons-material/ChatBubbleOutlineRounded";
 
 import HomeScreen from "./screens/HomeScreen";
+import ProductivityScreen, { type ProductivityTab } from "./screens/ProductivityScreen";
 import ConversationSheet from "./components/ConversationSheet";
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
+  const [currentScreen, setCurrentScreen] = useState<"home" | "productivity">("home");
+  const [productivityTab, setProductivityTab] = useState<ProductivityTab>("tasks");
+
+  const handleOpenProductivity = (tab: ProductivityTab) => {
+    setProductivityTab(tab);
+    setCurrentScreen("productivity");
+  };
 
   return (
     <Box
       sx={{
         height: "100dvh",
         bgcolor: "background.default",
-        px: 3,
+        px: currentScreen === "productivity" ? 0 : 3,
         pt: "env(safe-area-inset-top)",
         pb: "env(safe-area-inset-bottom)",
       }}
     >
-      <HomeScreen />
+      {currentScreen === "home" ? (
+        <HomeScreen onOpenProductivity={handleOpenProductivity} />
+      ) : (
+        <ProductivityScreen
+          initialTab={productivityTab}
+          onBack={() => setCurrentScreen("home")}
+        />
+      )}
 
-      <Fab
-        aria-label="Type a message"
-        size="medium"
-        onClick={() => setChatOpen(true)}
-        sx={{
-          position: "fixed",
-          right: 20,
-          bottom: `calc(24px + env(safe-area-inset-bottom))`,
-          bgcolor: "background.paper",
-          color: "text.secondary",
-          boxShadow: 3,
-        }}
-      >
-        <ChatBubbleOutlineRoundedIcon />
-      </Fab>
+      {currentScreen === "home" && (
+        <Fab
+          aria-label="Type a message"
+          size="medium"
+          onClick={() => setChatOpen(true)}
+          sx={{
+            position: "fixed",
+            right: 20,
+            bottom: `calc(24px + env(safe-area-inset-bottom))`,
+            bgcolor: "background.paper",
+            color: "text.secondary",
+            boxShadow: 3,
+          }}
+        >
+          <ChatBubbleOutlineRoundedIcon />
+        </Fab>
+      )}
 
       <ConversationSheet open={chatOpen} onClose={() => setChatOpen(false)} />
     </Box>
   );
 }
+

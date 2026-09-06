@@ -37,6 +37,53 @@ pub async fn open(path: &Path) -> Result<SqlitePool, LocalDbError> {
             created_at  text not null,
             synced_at   text
         );
+
+        create table if not exists local_tasks (
+            id           text primary key,
+            user_id      text not null,
+            title        text not null,
+            description  text not null default '',
+            priority     text not null default 'P4',
+            status       text not null default 'todo',
+            due_at       text,
+            project      text not null default 'Inbox',
+            created_at   text not null,
+            updated_at   text not null,
+            completed_at text
+        );
+
+        create table if not exists local_reminders (
+            id          text primary key,
+            user_id     text not null,
+            task_id     text,
+            title       text not null,
+            remind_at   text not null,
+            status      text not null default 'pending',
+            created_at  text not null,
+            updated_at  text not null
+        );
+
+        create table if not exists local_notes (
+            id           text primary key,
+            user_id      text not null,
+            title        text not null,
+            content      text not null default '',
+            is_archived  integer not null default 0,
+            tags         text not null default '[]',
+            created_at   text not null,
+            updated_at   text not null
+        );
+
+        create table if not exists local_ideas (
+            id                 text primary key,
+            user_id            text not null,
+            title              text not null,
+            description        text not null default '',
+            status             text not null default 'active',
+            converted_task_id  text,
+            created_at         text not null,
+            updated_at         text not null
+        );
         "#,
     )
     .execute(&pool)

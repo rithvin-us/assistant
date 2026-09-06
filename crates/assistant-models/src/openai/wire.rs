@@ -74,15 +74,15 @@ pub(super) fn build_request(
 ) -> WireRequest {
     let mut messages = Vec::new();
 
-    if let Some(system) = &request.system_prompt {
-        if !system.trim().is_empty() {
-            messages.push(WireMessage {
-                role: "system".into(),
-                content: Some(system.clone()),
-                tool_calls: None,
-                tool_call_id: None,
-            });
-        }
+    if let Some(system) = &request.system_prompt
+        && !system.trim().is_empty()
+    {
+        messages.push(WireMessage {
+            role: "system".into(),
+            content: Some(system.clone()),
+            tool_calls: None,
+            tool_call_id: None,
+        });
     }
 
     for msg in &request.messages {
@@ -171,7 +171,9 @@ pub(super) fn build_request(
         temperature: request.temperature.or(config.temperature),
         stream,
         stream_options: if stream {
-            Some(StreamOptions { include_usage: true })
+            Some(StreamOptions {
+                include_usage: true,
+            })
         } else {
             None
         },

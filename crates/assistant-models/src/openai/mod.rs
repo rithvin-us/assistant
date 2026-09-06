@@ -134,11 +134,7 @@ impl ModelProvider for OpenAIModelProvider {
     async fn stream(&self, request: GenerateRequest) -> Result<ChunkStream, ModelError> {
         let body = wire::build_request(&self.config, &request, true);
 
-        let response = self
-            .post(&body)
-            .send()
-            .await
-            .map_err(transport_error)?;
+        let response = self.post(&body).send().await.map_err(transport_error)?;
 
         let status = response.status();
         if !status.is_success() {
@@ -241,11 +237,12 @@ fn parse_error_detail(body: &str) -> String {
         message: Option<String>,
     }
 
-    if let Ok(wrapper) = serde_json::from_str::<ErrorWrapper>(body) {
-        if let Some(msg) = wrapper.error.and_then(|e| e.message) {
-            return msg;
-        }
+    if let Ok(wrapper) = serde_json::from_str::<ErrorWrapper>(body)
+        && let Some(msg) = wrapper.error.and_then(|e| e.message)
+    {
+        return msg;
     }
+
     body.chars().take(200).collect()
 }
 

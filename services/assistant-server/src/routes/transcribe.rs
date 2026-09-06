@@ -91,10 +91,10 @@ pub async fn transcribe(
         .text("model", model.to_string())
         .text("response_format", "json");
 
-    if let Some(lang) = &state.openai_transcription_language {
-        if !lang.trim().is_empty() {
-            form = form.text("language", lang.clone());
-        }
+    if let Some(lang) = &state.openai_transcription_language
+        && !lang.trim().is_empty()
+    {
+        form = form.text("language", lang.clone());
     }
 
     let response = state

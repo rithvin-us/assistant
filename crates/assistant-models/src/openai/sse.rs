@@ -1,8 +1,8 @@
 //! Server-sent-event decoding for the OpenAI Chat Completions stream.
 
-use std::collections::{HashMap, VecDeque};
 use serde::Deserialize;
 use serde_json::Value;
+use std::collections::{HashMap, VecDeque};
 
 use crate::{ModelError, StreamChunk, Usage};
 use assistant_tools::ToolCall;
@@ -140,10 +140,10 @@ impl SseDecoder {
         }
 
         for choice in payload.choices {
-            if let Some(text) = choice.delta.content {
-                if !text.is_empty() {
-                    out.push_back(Ok(StreamChunk::Text(text)));
-                }
+            if let Some(text) = choice.delta.content
+                && !text.is_empty()
+            {
+                out.push_back(Ok(StreamChunk::Text(text)));
             }
 
             if let Some(tool_calls) = choice.delta.tool_calls {
@@ -163,10 +163,10 @@ impl SseDecoder {
                 }
             }
 
-            if let Some(finish_reason) = choice.finish_reason {
-                if finish_reason == "tool_calls" || finish_reason == "stop" {
-                    self.flush_tool_calls(out);
-                }
+            if let Some(finish_reason) = choice.finish_reason
+                && (finish_reason == "tool_calls" || finish_reason == "stop")
+            {
+                self.flush_tool_calls(out);
             }
         }
     }
@@ -176,15 +176,15 @@ impl SseDecoder {
         keys.sort_unstable();
 
         for key in keys {
-            if let Some(tc) = self.tool_calls.remove(&key) {
-                if !tc.name.is_empty() {
-                    let args: Value = serde_json::from_str(&tc.arguments).unwrap_or(Value::Null);
-                    out.push_back(Ok(StreamChunk::ToolCall(ToolCall {
-                        id: tc.id,
-                        name: tc.name,
-                        arguments: args,
-                    })));
-                }
+            if let Some(tc) = self.tool_calls.remove(&key)
+                && !tc.name.is_empty()
+            {
+                let args: Value = serde_json::from_str(&tc.arguments).unwrap_or(Value::Null);
+                out.push_back(Ok(StreamChunk::ToolCall(ToolCall {
+                    id: tc.id,
+                    name: tc.name,
+                    arguments: args,
+                })));
             }
         }
     }

@@ -37,7 +37,14 @@ const AI_THINKING_STAGES = [
   { threshold: Infinity, text: "Synthesizing answer…" },
 ];
 
-export default function HomeScreen() {
+import ChecklistRoundedIcon from "@mui/icons-material/ChecklistRounded";
+import type { ProductivityTab } from "./ProductivityScreen";
+
+export default function HomeScreen({
+  onOpenProductivity,
+}: {
+  onOpenProductivity?: (tab: ProductivityTab) => void;
+}) {
   const [connection, setConnection] = useState<ConnectionState>(CHECKING);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [activeVoiceState, setActiveVoiceState] = useState<OrbState | null>(null);
@@ -71,18 +78,24 @@ export default function HomeScreen() {
 
   // Track elapsed timer during active turns (listening, thinking, speaking)
   useEffect(() => {
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) setElapsedMs(0);
+    });
+
     if (currentOrbState === "idle" || currentOrbState === "connecting" || currentOrbState === "error") {
-      setElapsedMs(0);
       return;
     }
 
-    setElapsedMs(0);
     const start = Date.now();
     const interval = setInterval(() => {
       setElapsedMs(Date.now() - start);
     }, 100);
 
-    return () => clearInterval(interval);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, [currentOrbState]);
 
   // Automated state progression for thinking and speaking
@@ -90,8 +103,6 @@ export default function HomeScreen() {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     if (currentOrbState === "listening") {
-      // If hands-free tap mode: auto-advance after silence (5.5s)
-      // If holding: safe upper cap of 45s
       timer = setTimeout(() => {
         isHoldingRef.current = false;
         isHandsFreeRef.current = false;
@@ -99,12 +110,10 @@ export default function HomeScreen() {
         setActiveVoiceState("thinking");
       }, isHolding ? 45000 : 5500);
     } else if (currentOrbState === "thinking") {
-      // AI model finishes thinking and automatically speaks the response
       timer = setTimeout(() => {
         setActiveVoiceState("speaking");
       }, 4200);
     } else if (currentOrbState === "speaking") {
-      // Finished speaking response, automatically return to idle
       timer = setTimeout(() => {
         setActiveVoiceState("idle");
         setTranscribedText(null);
@@ -116,7 +125,6 @@ export default function HomeScreen() {
     };
   }, [currentOrbState, isHolding]);
 
-  // Seamless Hold-to-Talk AND Tap-to-Talk Pointer Handlers
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
@@ -127,7 +135,6 @@ export default function HomeScreen() {
     pointerDownTimeRef.current = Date.now();
     pointerStateAtDownRef.current = currentOrbState;
 
-    // 1. If assistant is currently thinking or speaking, a tap acts as an instant interrupt
     if (currentOrbState === "thinking" || currentOrbState === "speaking") {
       setActiveVoiceState("idle");
       isHoldingRef.current = false;
@@ -136,12 +143,10 @@ export default function HomeScreen() {
       return;
     }
 
-    // 2. If already in hands-free listening, down event is preparing to finish
     if (currentOrbState === "listening" && isHandsFreeRef.current) {
       return;
     }
 
-    // 3. When starting from idle: start listening immediately with active hold!
     if (currentOrbState === "idle" || currentOrbState === "connecting") {
       isHoldingRef.current = true;
       isHandsFreeRef.current = false;
@@ -162,7 +167,6 @@ export default function HomeScreen() {
     const duration = Date.now() - pointerDownTimeRef.current;
     const stateAtDown = pointerStateAtDownRef.current;
 
-    // If it was already thinking or speaking when pressed, interrupt already completed
     if (stateAtDown === "thinking" || stateAtDown === "speaking") {
       return;
     }
@@ -187,20 +191,15 @@ export default function HomeScreen() {
       }
     };
 
-    // If tapped while already in hands-free listening mode: finish and think!
     if (stateAtDown === "listening" && isHandsFreeRef.current) {
       void finishListeningAndSend();
       return;
     }
 
-    // Started from idle:
     if (stateAtDown === "idle" || stateAtDown === "connecting") {
       if (duration >= 350) {
-        // User held to talk (> 350ms) and released: immediately trigger thinking!
         void finishListeningAndSend();
       } else {
-        // User tapped / clicked (< 350ms): activate hands-free listening mode!
-        // Stays in listening mode so user can speak freely without holding!
         isHoldingRef.current = false;
         isHandsFreeRef.current = true;
         setIsHolding(false);
@@ -219,7 +218,6 @@ export default function HomeScreen() {
 
     const duration = Date.now() - pointerDownTimeRef.current;
     if (isHoldingRef.current && duration >= 350) {
-      // If held for >= 350ms, treat as successful speech completion
       isHoldingRef.current = false;
       isHandsFreeRef.current = false;
       setIsHolding(false);
@@ -244,7 +242,6 @@ export default function HomeScreen() {
 
   const elapsedSec = (elapsedMs / 1000).toFixed(1);
 
-  // Derive status text with progressive thinking phases
   const renderStatus = () => {
     if (currentOrbState === "connecting") {
       return (
@@ -368,13 +365,13 @@ export default function HomeScreen() {
   const waveVariant: SiriWaveVariant =
     currentOrbState === "thinking" ? "fluid-dots" : "wave";
 
-  // Effective voice audio level passed to WebGL shader
   const effectiveAudioLevel =
     currentOrbState === "listening"
       ? audioLevel
       : currentOrbState === "speaking"
-        ? 0.35 + 0.15 * Math.sin(Date.now() / 450) * Math.cos(Date.now() / 700)
+        ? 0.35 + 0.15 * Math.sin(elapsedMs / 450) * Math.cos(elapsedMs / 700)
         : 0;
+
 
   return (
     <Box
@@ -411,31 +408,43 @@ export default function HomeScreen() {
             Assistant
           </Typography>
         </Box>
-        <Tooltip title={connection.kind === "offline" ? "Demo Mode (Offline Preview)" : connection.detail}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
-            {connection.kind === "offline" && (
-              <Typography
-                variant="caption"
-                sx={{
-                  fontSize: "0.68rem",
-                  fontWeight: 600,
-                  bgcolor: "rgba(124, 58, 237, 0.1)",
-                  color: "#7c3aed",
-                  px: 1,
-                  py: 0.25,
-                  borderRadius: "12px",
-                  letterSpacing: "0.02em",
-                }}
-              >
-                Demo Mode
-              </Typography>
-            )}
-            <Box
-              aria-label={`Server ${connection.kind}`}
-              sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: dotColor }}
-            />
-          </Box>
-        </Tooltip>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          {onOpenProductivity && (
+            <IconButton
+              size="small"
+              onClick={() => onOpenProductivity("tasks")}
+              sx={{ color: "primary.main" }}
+              aria-label="Open Tasks"
+            >
+              <ChecklistRoundedIcon />
+            </IconButton>
+          )}
+          <Tooltip title={connection.kind === "offline" ? "Demo Mode (Offline Preview)" : connection.detail}>
+            <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+              {connection.kind === "offline" && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontSize: "0.68rem",
+                    fontWeight: 600,
+                    bgcolor: "rgba(124, 58, 237, 0.1)",
+                    color: "#7c3aed",
+                    px: 1,
+                    py: 0.25,
+                    borderRadius: "12px",
+                    letterSpacing: "0.02em",
+                  }}
+                >
+                  Demo Mode
+                </Typography>
+              )}
+              <Box
+                aria-label={`Server ${connection.kind}`}
+                sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: dotColor }}
+              />
+            </Box>
+          </Tooltip>
+        </Box>
       </Box>
 
       {/* Main Siri Wave GLSL Canvas Container */}
@@ -526,7 +535,11 @@ export default function HomeScreen() {
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         connection={connection}
+        onSelectTab={(tab) => {
+          if (onOpenProductivity) onOpenProductivity(tab);
+        }}
       />
     </Box>
   );
 }
+

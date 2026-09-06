@@ -156,7 +156,10 @@ impl fmt::Debug for Config {
                 "openai_api_key",
                 &self.openai_api_key.as_ref().map(|_| "<redacted>"),
             )
-            .field("openai_transcription_model", &self.openai_transcription_model)
+            .field(
+                "openai_transcription_model",
+                &self.openai_transcription_model,
+            )
             .field(
                 "openai_transcription_language",
                 &self.openai_transcription_language,

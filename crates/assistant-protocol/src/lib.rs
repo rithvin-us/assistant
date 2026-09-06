@@ -221,3 +221,69 @@ pub enum ApprovalOutcome {
     /// approval belonging to somebody else.
     NotFound,
 }
+
+/// Standalone Task model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskItem {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub title: String,
+    pub description: String,
+    pub priority: String,
+    pub status: String,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub due_at: Option<OffsetDateTime>,
+    pub project: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub completed_at: Option<OffsetDateTime>,
+}
+
+/// Standalone Reminder model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReminderItem {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub task_id: Option<Uuid>,
+    pub title: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub remind_at: OffsetDateTime,
+    pub status: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+/// Standalone Note model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteItem {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub title: String,
+    pub content: String,
+    pub is_archived: bool,
+    pub tags: Vec<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+/// Standalone Idea model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdeaItem {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub title: String,
+    pub description: String,
+    pub status: String,
+    pub converted_task_id: Option<Uuid>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}

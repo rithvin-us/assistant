@@ -38,7 +38,10 @@ impl OpenAIConfig {
     }
 
     pub fn chat_completions_url(&self) -> String {
-        format!("{}/v1/chat/completions", self.base_url.trim_end_matches('/'))
+        format!(
+            "{}/v1/chat/completions",
+            self.base_url.trim_end_matches('/')
+        )
     }
 }
 

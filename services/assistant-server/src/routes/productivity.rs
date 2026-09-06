@@ -1,0 +1,790 @@
+//! REST endpoints for Standalone Productivity features (Tasks, Reminders, Notes, Ideas).
+
+use assistant_auth::Principal;
+use assistant_protocol::{IdeaItem, NoteItem, ReminderItem, TaskItem};
+use axum::{
+    Extension, Json,
+    extract::{Path, Query, State},
+    http::StatusCode,
+};
+use serde::{Deserialize, Serialize};
+use sqlx::{PgPool, Row, postgres::PgRow};
+use time::OffsetDateTime;
+use uuid::Uuid;
+
+use crate::{error::AppError, state::SharedState};
+
+async fn ensure_user(pool: &PgPool, user_id: Uuid) -> Result<(), AppError> {
+    sqlx::query("insert into users (id) values ($1) on conflict (id) do nothing")
+        .bind(user_id)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(())
+}
+
+fn db_pool(state: &SharedState) -> Result<&PgPool, AppError> {
+    state
+        .db
+        .as_ref()
+        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("database unavailable")))
+}
+
+fn task_from_row(row: &PgRow) -> Result<TaskItem, sqlx::Error> {
+    Ok(TaskItem {
+        id: row.try_get("id")?,
+        user_id: row.try_get("user_id")?,
+        title: row.try_get("title")?,
+        description: row.try_get("description")?,
+        priority: row.try_get("priority")?,
+        status: row.try_get("status")?,
+        due_at: row.try_get("due_at")?,
+        project: row.try_get("project")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+        completed_at: row.try_get("completed_at")?,
+    })
+}
+
+fn reminder_from_row(row: &PgRow) -> Result<ReminderItem, sqlx::Error> {
+    Ok(ReminderItem {
+        id: row.try_get("id")?,
+        user_id: row.try_get("user_id")?,
+        task_id: row.try_get("task_id")?,
+        title: row.try_get("title")?,
+        remind_at: row.try_get("remind_at")?,
+        status: row.try_get("status")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
+}
+
+fn note_from_row(row: &PgRow) -> Result<NoteItem, sqlx::Error> {
+    Ok(NoteItem {
+        id: row.try_get("id")?,
+        user_id: row.try_get("user_id")?,
+        title: row.try_get("title")?,
+        content: row.try_get("content")?,
+        is_archived: row.try_get("is_archived")?,
+        tags: row.try_get("tags")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
+}
+
+fn idea_from_row(row: &PgRow) -> Result<IdeaItem, sqlx::Error> {
+    Ok(IdeaItem {
+        id: row.try_get("id")?,
+        user_id: row.try_get("user_id")?,
+        title: row.try_get("title")?,
+        description: row.try_get("description")?,
+        status: row.try_get("status")?,
+        converted_task_id: row.try_get("converted_task_id")?,
+        created_at: row.try_get("created_at")?,
+        updated_at: row.try_get("updated_at")?,
+    })
+}
+
+// ------------------- TASKS -------------------
+
+#[derive(Debug, Deserialize)]
+pub struct TaskFilter {
+    pub status: Option<String>,
+    pub priority: Option<String>,
+    pub project: Option<String>,
+    pub q: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateTaskInput {
+    pub title: String,
+    pub description: Option<String>,
+    pub priority: Option<String>,
+    pub due_at: Option<OffsetDateTime>,
+    pub project: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateTaskInput {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub priority: Option<String>,
+    pub status: Option<String>,
+    pub due_at: Option<Option<OffsetDateTime>>,
+    pub project: Option<String>,
+}
+
+pub async fn list_tasks(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Query(filter): Query<TaskFilter>,
+) -> Result<Json<Vec<TaskItem>>, AppError> {
+    let pool = db_pool(&state)?;
+    ensure_user(pool, principal.user_id).await?;
+
+    let mut query = String::from(
+        "select id, user_id, title, description, priority, status, due_at, project, created_at, updated_at, completed_at
+         from tasks where user_id = $1",
+    );
+
+    if let Some(ref st) = filter.status {
+        query.push_str(&format!(" and status = '{}'", st.replace('\'', "''")));
+    }
+    if let Some(ref pr) = filter.priority {
+        query.push_str(&format!(" and priority = '{}'", pr.replace('\'', "''")));
+    }
+    if let Some(ref proj) = filter.project {
+        query.push_str(&format!(" and project = '{}'", proj.replace('\'', "''")));
+    }
+    if let Some(ref search) = filter.q {
+        let escaped = search.replace('\'', "''");
+        query.push_str(&format!(
+            " and (title ilike '%{escaped}%' or description ilike '%{escaped}%')"
+        ));
+    }
+    query.push_str(" order by status asc, due_at asc nulls last, created_at desc");
+
+    let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+        .bind(principal.user_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let tasks = rows
+        .iter()
+        .map(task_from_row)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(tasks))
+}
+
+pub async fn create_task(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Json(input): Json<CreateTaskInput>,
+) -> Result<Json<TaskItem>, AppError> {
+    let pool = db_pool(&state)?;
+    ensure_user(pool, principal.user_id).await?;
+
+    let priority = input.priority.unwrap_or_else(|| "P4".into());
+    let description = input.description.unwrap_or_default();
+    let project = input.project.unwrap_or_else(|| "Inbox".into());
+
+    let row = sqlx::query(
+        "insert into tasks (user_id, title, description, priority, status, due_at, project)
+         values ($1, $2, $3, $4, 'todo', $5, $6)
+         returning id, user_id, title, description, priority, status, due_at, project, created_at, updated_at, completed_at",
+    )
+    .bind(principal.user_id)
+    .bind(input.title)
+    .bind(description)
+    .bind(priority)
+    .bind(input.due_at)
+    .bind(project)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let task = task_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(task))
+}
+
+pub async fn update_task(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<UpdateTaskInput>,
+) -> Result<Json<TaskItem>, AppError> {
+    let pool = db_pool(&state)?;
+
+    let current_row = sqlx::query("select * from tasks where id = $1 and user_id = $2")
+        .bind(id)
+        .bind(principal.user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let Some(current) = current_row else {
+        return Err(AppError::NotFound);
+    };
+
+    let title: String = input.title.unwrap_or_else(|| current.get("title"));
+    let description: String = input
+        .description
+        .unwrap_or_else(|| current.get("description"));
+    let priority: String = input.priority.unwrap_or_else(|| current.get("priority"));
+    let status: String = input.status.unwrap_or_else(|| current.get("status"));
+    let project: String = input.project.unwrap_or_else(|| current.get("project"));
+    let due_at: Option<OffsetDateTime> = match input.due_at {
+        Some(val) => val,
+        None => current.get("due_at"),
+    };
+
+    let completed_at: Option<OffsetDateTime> = if status == "completed" {
+        Some(OffsetDateTime::now_utc())
+    } else {
+        None
+    };
+
+    let row = sqlx::query(
+        "update tasks set title = $1, description = $2, priority = $3, status = $4, due_at = $5, project = $6, updated_at = now(), completed_at = $7
+         where id = $8 and user_id = $9
+         returning id, user_id, title, description, priority, status, due_at, project, created_at, updated_at, completed_at",
+    )
+    .bind(title)
+    .bind(description)
+    .bind(priority)
+    .bind(status)
+    .bind(due_at)
+    .bind(project)
+    .bind(completed_at)
+    .bind(id)
+    .bind(principal.user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let task = task_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(task))
+}
+
+pub async fn delete_task(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let pool = db_pool(&state)?;
+    let result = sqlx::query("delete from tasks where id = $1 and user_id = $2")
+        .bind(id)
+        .bind(principal.user_id)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ------------------- REMINDERS -------------------
+
+#[derive(Debug, Deserialize)]
+pub struct ReminderFilter {
+    pub status: Option<String>,
+    pub q: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateReminderInput {
+    pub title: String,
+    pub remind_at: OffsetDateTime,
+    pub task_id: Option<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateReminderInput {
+    pub title: Option<String>,
+    pub remind_at: Option<OffsetDateTime>,
+    pub status: Option<String>,
+    pub task_id: Option<Option<Uuid>>,
+}
+
+pub async fn list_reminders(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Query(filter): Query<ReminderFilter>,
+) -> Result<Json<Vec<ReminderItem>>, AppError> {
+    let pool = db_pool(&state)?;
+    ensure_user(pool, principal.user_id).await?;
+
+    let mut query = String::from(
+        "select id, user_id, task_id, title, remind_at, status, created_at, updated_at
+         from reminders where user_id = $1",
+    );
+
+    if let Some(ref st) = filter.status {
+        query.push_str(&format!(" and status = '{}'", st.replace('\'', "''")));
+    }
+    if let Some(ref search) = filter.q {
+        let escaped = search.replace('\'', "''");
+        query.push_str(&format!(" and title ilike '%{escaped}%'"));
+    }
+    query.push_str(" order by status asc, remind_at asc");
+
+    let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+        .bind(principal.user_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let reminders = rows
+        .iter()
+        .map(reminder_from_row)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(reminders))
+}
+
+pub async fn create_reminder(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Json(input): Json<CreateReminderInput>,
+) -> Result<Json<ReminderItem>, AppError> {
+    let pool = db_pool(&state)?;
+    ensure_user(pool, principal.user_id).await?;
+
+    let row = sqlx::query(
+        "insert into reminders (user_id, title, remind_at, task_id, status)
+         values ($1, $2, $3, $4, 'pending')
+         returning id, user_id, task_id, title, remind_at, status, created_at, updated_at",
+    )
+    .bind(principal.user_id)
+    .bind(input.title)
+    .bind(input.remind_at)
+    .bind(input.task_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let reminder = reminder_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(reminder))
+}
+
+pub async fn update_reminder(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<UpdateReminderInput>,
+) -> Result<Json<ReminderItem>, AppError> {
+    let pool = db_pool(&state)?;
+
+    let current_row = sqlx::query("select * from reminders where id = $1 and user_id = $2")
+        .bind(id)
+        .bind(principal.user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let Some(current) = current_row else {
+        return Err(AppError::NotFound);
+    };
+
+    let title: String = input.title.unwrap_or_else(|| current.get("title"));
+    let remind_at: OffsetDateTime = input.remind_at.unwrap_or_else(|| current.get("remind_at"));
+    let status: String = input.status.unwrap_or_else(|| current.get("status"));
+    let task_id: Option<Uuid> = match input.task_id {
+        Some(val) => val,
+        None => current.get("task_id"),
+    };
+
+    let row = sqlx::query(
+        "update reminders set title = $1, remind_at = $2, status = $3, task_id = $4, updated_at = now()
+         where id = $5 and user_id = $6
+         returning id, user_id, task_id, title, remind_at, status, created_at, updated_at",
+    )
+    .bind(title)
+    .bind(remind_at)
+    .bind(status)
+    .bind(task_id)
+    .bind(id)
+    .bind(principal.user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let reminder = reminder_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(reminder))
+}
+
+pub async fn delete_reminder(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let pool = db_pool(&state)?;
+    let result = sqlx::query("delete from reminders where id = $1 and user_id = $2")
+        .bind(id)
+        .bind(principal.user_id)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ------------------- NOTES -------------------
+
+#[derive(Debug, Deserialize)]
+pub struct NoteFilter {
+    pub is_archived: Option<bool>,
+    pub q: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateNoteInput {
+    pub title: String,
+    pub content: Option<String>,
+    pub tags: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateNoteInput {
+    pub title: Option<String>,
+    pub content: Option<String>,
+    pub is_archived: Option<bool>,
+    pub tags: Option<Vec<String>>,
+}
+
+pub async fn list_notes(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Query(filter): Query<NoteFilter>,
+) -> Result<Json<Vec<NoteItem>>, AppError> {
+    let pool = db_pool(&state)?;
+    ensure_user(pool, principal.user_id).await?;
+
+    let mut query = String::from(
+        "select id, user_id, title, content, is_archived, tags, created_at, updated_at
+         from notes where user_id = $1",
+    );
+
+    if let Some(archived) = filter.is_archived {
+        query.push_str(&format!(" and is_archived = {}", archived));
+    }
+    if let Some(ref search) = filter.q {
+        let escaped = search.replace('\'', "''");
+        query.push_str(&format!(
+            " and (title ilike '%{escaped}%' or content ilike '%{escaped}%')"
+        ));
+    }
+    query.push_str(" order by updated_at desc");
+
+    let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+        .bind(principal.user_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let notes = rows
+        .iter()
+        .map(note_from_row)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(notes))
+}
+
+pub async fn create_note(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Json(input): Json<CreateNoteInput>,
+) -> Result<Json<NoteItem>, AppError> {
+    let pool = db_pool(&state)?;
+    ensure_user(pool, principal.user_id).await?;
+
+    let content = input.content.unwrap_or_default();
+    let tags = input.tags.unwrap_or_default();
+
+    let row = sqlx::query(
+        "insert into notes (user_id, title, content, is_archived, tags)
+         values ($1, $2, $3, false, $4)
+         returning id, user_id, title, content, is_archived, tags, created_at, updated_at",
+    )
+    .bind(principal.user_id)
+    .bind(input.title)
+    .bind(content)
+    .bind(tags)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let note = note_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(note))
+}
+
+pub async fn update_note(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<UpdateNoteInput>,
+) -> Result<Json<NoteItem>, AppError> {
+    let pool = db_pool(&state)?;
+
+    let current_row = sqlx::query("select * from notes where id = $1 and user_id = $2")
+        .bind(id)
+        .bind(principal.user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let Some(current) = current_row else {
+        return Err(AppError::NotFound);
+    };
+
+    let title: String = input.title.unwrap_or_else(|| current.get("title"));
+    let content: String = input.content.unwrap_or_else(|| current.get("content"));
+    let is_archived: bool = input
+        .is_archived
+        .unwrap_or_else(|| current.get("is_archived"));
+    let tags: Vec<String> = input.tags.unwrap_or_else(|| current.get("tags"));
+
+    let row = sqlx::query(
+        "update notes set title = $1, content = $2, is_archived = $3, tags = $4, updated_at = now()
+         where id = $5 and user_id = $6
+         returning id, user_id, title, content, is_archived, tags, created_at, updated_at",
+    )
+    .bind(title)
+    .bind(content)
+    .bind(is_archived)
+    .bind(tags)
+    .bind(id)
+    .bind(principal.user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let note = note_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(note))
+}
+
+pub async fn delete_note(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let pool = db_pool(&state)?;
+    let result = sqlx::query("delete from notes where id = $1 and user_id = $2")
+        .bind(id)
+        .bind(principal.user_id)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ------------------- IDEAS -------------------
+
+#[derive(Debug, Deserialize)]
+pub struct IdeaFilter {
+    pub status: Option<String>,
+    pub q: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateIdeaInput {
+    pub title: String,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateIdeaInput {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ConvertIdeaResponse {
+    pub idea: IdeaItem,
+    pub task: TaskItem,
+}
+
+pub async fn list_ideas(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Query(filter): Query<IdeaFilter>,
+) -> Result<Json<Vec<IdeaItem>>, AppError> {
+    let pool = db_pool(&state)?;
+    ensure_user(pool, principal.user_id).await?;
+
+    let mut query = String::from(
+        "select id, user_id, title, description, status, converted_task_id, created_at, updated_at
+         from ideas where user_id = $1",
+    );
+
+    if let Some(ref st) = filter.status {
+        query.push_str(&format!(" and status = '{}'", st.replace('\'', "''")));
+    }
+    if let Some(ref search) = filter.q {
+        let escaped = search.replace('\'', "''");
+        query.push_str(&format!(
+            " and (title ilike '%{escaped}%' or description ilike '%{escaped}%')"
+        ));
+    }
+    query.push_str(" order by updated_at desc");
+
+    let rows = sqlx::query(sqlx::AssertSqlSafe(query.as_str()))
+        .bind(principal.user_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let ideas = rows
+        .iter()
+        .map(idea_from_row)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(ideas))
+}
+
+pub async fn create_idea(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Json(input): Json<CreateIdeaInput>,
+) -> Result<Json<IdeaItem>, AppError> {
+    let pool = db_pool(&state)?;
+    ensure_user(pool, principal.user_id).await?;
+
+    let description = input.description.unwrap_or_default();
+
+    let row = sqlx::query(
+        "insert into ideas (user_id, title, description, status)
+         values ($1, $2, $3, 'active')
+         returning id, user_id, title, description, status, converted_task_id, created_at, updated_at",
+    )
+    .bind(principal.user_id)
+    .bind(input.title)
+    .bind(description)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let idea = idea_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(idea))
+}
+
+pub async fn update_idea(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<UpdateIdeaInput>,
+) -> Result<Json<IdeaItem>, AppError> {
+    let pool = db_pool(&state)?;
+
+    let current_row = sqlx::query("select * from ideas where id = $1 and user_id = $2")
+        .bind(id)
+        .bind(principal.user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let Some(current) = current_row else {
+        return Err(AppError::NotFound);
+    };
+
+    let title: String = input.title.unwrap_or_else(|| current.get("title"));
+    let description: String = input
+        .description
+        .unwrap_or_else(|| current.get("description"));
+    let status: String = input.status.unwrap_or_else(|| current.get("status"));
+
+    let row = sqlx::query(
+        "update ideas set title = $1, description = $2, status = $3, updated_at = now()
+         where id = $4 and user_id = $5
+         returning id, user_id, title, description, status, converted_task_id, created_at, updated_at",
+    )
+    .bind(title)
+    .bind(description)
+    .bind(status)
+    .bind(id)
+    .bind(principal.user_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let idea = idea_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    Ok(Json(idea))
+}
+
+pub async fn convert_idea_to_task(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<ConvertIdeaResponse>, AppError> {
+    let pool = db_pool(&state)?;
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let idea_row = sqlx::query("select * from ideas where id = $1 and user_id = $2 for update")
+        .bind(id)
+        .bind(principal.user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    let Some(idea_current) = idea_row else {
+        return Err(AppError::NotFound);
+    };
+
+    let idea_obj = idea_from_row(&idea_current).map_err(|e| AppError::Internal(e.into()))?;
+
+    let task_row = sqlx::query(
+        "insert into tasks (user_id, title, description, priority, status, project)
+         values ($1, $2, $3, 'P4', 'todo', 'Inbox')
+         returning id, user_id, title, description, priority, status, due_at, project, created_at, updated_at, completed_at",
+    )
+    .bind(principal.user_id)
+    .bind(idea_obj.title)
+    .bind(idea_obj.description)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let task_obj = task_from_row(&task_row).map_err(|e| AppError::Internal(e.into()))?;
+
+    let updated_idea_row = sqlx::query(
+        "update ideas set status = 'converted', converted_task_id = $1, updated_at = now()
+         where id = $2 and user_id = $3
+         returning id, user_id, title, description, status, converted_task_id, created_at, updated_at",
+    )
+    .bind(task_obj.id)
+    .bind(id)
+    .bind(principal.user_id)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| AppError::Internal(e.into()))?;
+
+    let updated_idea =
+        idea_from_row(&updated_idea_row).map_err(|e| AppError::Internal(e.into()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    Ok(Json(ConvertIdeaResponse {
+        idea: updated_idea,
+        task: task_obj,
+    }))
+}
+
+pub async fn delete_idea(
+    State(state): State<SharedState>,
+    Extension(principal): Extension<Principal>,
+    Path(id): Path<Uuid>,
+) -> Result<StatusCode, AppError> {
+    let pool = db_pool(&state)?;
+    let result = sqlx::query("delete from ideas where id = $1 and user_id = $2")
+        .bind(id)
+        .bind(principal.user_id)
+        .execute(pool)
+        .await
+        .map_err(|e| AppError::Internal(e.into()))?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound);
+    }
+
+    Ok(StatusCode::NO_CONTENT)
+}
