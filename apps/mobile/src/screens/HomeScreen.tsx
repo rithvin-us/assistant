@@ -1,11 +1,7 @@
 /**
- * HomeScreen — Immersive Frameless Voice Orb.
+ * HomeScreen — Immersive Pure Voice Orb.
  *
- * Features:
- * - Grand, frameless 320px voice orb floating seamlessly on the screen.
- * - Zero frames, zero borders, zero box-shadow rings.
- * - Zero tap highlight / blue selection box.
- * - Dynamic, playful Claude-style process status messages ("Clauding...", "Brewing thoughts...", "Flabbergasting...", etc.).
+ * Uses theme="circle" for a pure, frameless, smooth pulsing orb with zero outer red rings.
  */
 
 import { useState, useEffect } from "react";
@@ -191,7 +187,7 @@ export default function HomeScreen() {
         </Tooltip>
       </Box>
 
-      {/* Main Voice Orb Container — Frameless & Grand (320px) */}
+      {/* Main Voice Orb Container — Pure, Frameless 320px Orb */}
       <Box
         sx={{
           alignSelf: "center",
@@ -227,7 +223,7 @@ export default function HomeScreen() {
             },
           }}
         >
-          <Orb theme="cloud" size={320} state={currentOrbState} />
+          <Orb theme="circle" size={320} state={currentOrbState} />
         </Box>
 
         <Box sx={{ textAlign: "center", minHeight: 48, display: "flex", alignItems: "center" }}>
