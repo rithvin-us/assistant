@@ -291,7 +291,7 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
       </Box>
 
       {/* Main Task List */}
-      <Box sx={{ flexGrow: 1, overflowY: "auto", px: 2, pb: 12 }}>
+      <Box sx={{ flexGrow: 1, overflowY: quickAddOpen ? "hidden" : "auto", px: 2, pb: 12, position: "relative" }}>
         <Box sx={{ display: "flex", flexDirection: "column" }}>
           {tasks.length === 0 ? (
             <Typography color="#888888" sx={{ py: 6, textAlign: "center", fontSize: "0.95rem" }}>

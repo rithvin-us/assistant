@@ -108,8 +108,9 @@ pub use google_tools::{
     CalendarUpdateTool, GmailReadTool, GmailSearchTool,
 };
 pub use providers::{
-    CalendarEvent, CalendarProvider, CreateCalendarEvent, EmailDetail, EmailSummary, FreeSlot,
-    GmailProvider, UpdateCalendarEvent,
+    Announcement, CalendarEvent, CalendarProvider, ClassroomProvider, Course, CourseworkItem,
+    CreateCalendarEvent, DriveFile, DriveFileContent, DriveProvider, EmailDetail, EmailSummary,
+    FreeSlot, GmailProvider, UpdateCalendarEvent,
 };
 
 /// Implemented once per tool.

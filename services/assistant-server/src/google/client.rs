@@ -34,8 +34,11 @@ pub struct StoredGoogleTokens {
 
 #[derive(Clone)]
 pub struct GoogleClient {
-    pool: PgPool,
-    http: Client,
+    // `pub(super)` and no wider: the Classroom and Drive providers are sibling
+    // modules inside `google` and need the pool, the HTTP client and a fresh
+    // access token. Nothing outside this module can reach them.
+    pub(super) pool: PgPool,
+    pub(super) http: Client,
     client_id: Option<String>,
     client_secret: Option<String>,
     encryption_key: [u8; 32],
@@ -331,7 +334,11 @@ impl GoogleClient {
     }
 
     /// Retrieves an unexpired access token, transparently refreshing if expired.
-    async fn get_access_token(&self, user_id: Uuid, account_id: Uuid) -> Result<String, ToolError> {
+    pub(super) async fn get_access_token(
+        &self,
+        user_id: Uuid,
+        account_id: Uuid,
+    ) -> Result<String, ToolError> {
         let row = sqlx::query(
             r#"
             SELECT id, encrypted_credentials, status

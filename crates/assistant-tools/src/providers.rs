@@ -93,3 +93,90 @@ pub trait CalendarProvider: Send + Sync {
         event_id: &str,
     ) -> Result<(), ToolError>;
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 6 -- academic providers
+// ---------------------------------------------------------------------------
+//
+// Same rule as Gmail and Calendar: the trait is the seam. `assistant-core` and
+// the tools depend on these signatures; the concrete Classroom and Drive HTTP
+// clients live in `assistant-server`. Every method takes both `account_id` and
+// `user_id` because ownership is checked at the query, not by the caller.
+
+pub use assistant_protocol::{Announcement, Course, CourseworkItem, DriveFile, DriveFileContent};
+
+/// Capability interface for a course-management provider.
+///
+/// Read-only by design for Milestone 6: this milestone is about understanding
+/// academic information, not administering it. There is deliberately no
+/// submission, grading or roster method to call.
+#[async_trait]
+pub trait ClassroomProvider: Send + Sync {
+    /// Lists courses the user is enrolled in on this account.
+    async fn courses(&self, account_id: Uuid, user_id: Uuid) -> Result<Vec<Course>, ToolError>;
+
+    /// Lists coursework for one course.
+    async fn coursework(
+        &self,
+        account_id: Uuid,
+        user_id: Uuid,
+        course_external_id: &str,
+    ) -> Result<Vec<CourseworkItem>, ToolError>;
+
+    /// Lists announcements for one course, newest first.
+    async fn announcements(
+        &self,
+        account_id: Uuid,
+        user_id: Uuid,
+        course_external_id: &str,
+        limit: u32,
+    ) -> Result<Vec<Announcement>, ToolError>;
+}
+
+/// Capability interface for a file-storage provider.
+///
+/// Read-only. There is no delete, move, rename or share method, because those
+/// are consequential operations this milestone has no need for.
+#[async_trait]
+pub trait DriveProvider: Send + Sync {
+    /// Searches files by name and optional MIME type.
+    async fn search(
+        &self,
+        account_id: Uuid,
+        user_id: Uuid,
+        query: &str,
+        mime_type: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<DriveFile>, ToolError>;
+
+    /// Lists the contents of a folder, or the drive root when `folder_id` is
+    /// `None`.
+    async fn list(
+        &self,
+        account_id: Uuid,
+        user_id: Uuid,
+        folder_id: Option<&str>,
+        limit: u32,
+    ) -> Result<Vec<DriveFile>, ToolError>;
+
+    /// Reads metadata for one file.
+    async fn metadata(
+        &self,
+        account_id: Uuid,
+        user_id: Uuid,
+        file_id: &str,
+    ) -> Result<DriveFile, ToolError>;
+
+    /// Reads a small, text-shaped file.
+    ///
+    /// Implementations must check the reported size before downloading and
+    /// refuse anything above the configured ceiling or of an unsupported type,
+    /// rather than pulling an arbitrary file into memory. Refusal is an error
+    /// the user can read, never a silent empty body.
+    async fn read_small_file(
+        &self,
+        account_id: Uuid,
+        user_id: Uuid,
+        file_id: &str,
+    ) -> Result<DriveFileContent, ToolError>;
+}

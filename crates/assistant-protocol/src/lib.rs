@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// Bumped whenever a breaking change is made to the types in this crate. The
 /// client sends the version it was built against so the server can reject a
 /// mismatched build instead of misparsing it.
-pub const PROTOCOL_VERSION: u32 = 4;
+pub const PROTOCOL_VERSION: u32 = 5;
 
 pub type ConversationId = Uuid;
 pub type MessageId = Uuid;
@@ -414,4 +414,188 @@ pub struct FreeSlot {
     #[serde(with = "time::serde::rfc3339")]
     pub end_time: OffsetDateTime,
     pub duration_minutes: u32,
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 6 -- academic intelligence
+// ---------------------------------------------------------------------------
+//
+// These are provider-neutral on purpose. Nothing below names Google, and no
+// Google JSON reaches the UI or `assistant-core`: the concrete Classroom and
+// Drive clients in `assistant-server` normalise into these shapes. Adding a
+// second academic provider later should mean writing another normaliser, not
+// changing the wire contract. See ADR-0032.
+
+/// Where a piece of academic information came from. Carried so the UI can say
+/// "imported from Classroom" rather than presenting every task as if the user
+/// typed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AcademicSource {
+    Manual,
+    GoogleClassroom,
+    Gmail,
+    Calendar,
+    Drive,
+}
+
+/// A course the user is enrolled in.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Course {
+    /// Provider identifier, stable for the life of the course.
+    pub external_id: String,
+    pub account_id: Uuid,
+    pub name: String,
+    pub section: Option<String>,
+    pub description: Option<String>,
+    pub room: Option<String>,
+    pub teacher_name: Option<String>,
+    /// Provider's own lifecycle state, e.g. `ACTIVE` or `ARCHIVED`.
+    pub state: String,
+    /// Link into the provider's own UI, when it offers one.
+    pub alternate_link: Option<String>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub source_updated_at: Option<OffsetDateTime>,
+    /// When this application last heard from the provider. The UI uses it to
+    /// mark data as stale rather than implying a live read.
+    #[serde(with = "time::serde::rfc3339")]
+    pub synced_at: OffsetDateTime,
+}
+
+/// Metadata for a file attached to coursework or an announcement. Deliberately
+/// metadata only -- no file body ever travels in this type.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MaterialRef {
+    pub title: Option<String>,
+    pub link: Option<String>,
+    /// e.g. `drive_file`, `link`, `youtube_video`, `form`.
+    pub kind: Option<String>,
+}
+
+/// A single assignment or question.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CourseworkItem {
+    pub external_id: String,
+    pub course_external_id: String,
+    pub account_id: Uuid,
+    pub title: String,
+    pub description: Option<String>,
+    pub state: String,
+    pub alternate_link: Option<String>,
+    /// `None` means the assignment genuinely has no deadline -- never
+    /// "we could not work one out". A provider that sends a partial due date
+    /// yields `None`, because a guessed deadline is worse than no deadline.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub due_at: Option<OffsetDateTime>,
+    pub max_points: Option<f64>,
+    pub work_type: Option<String>,
+    #[serde(default)]
+    pub materials: Vec<MaterialRef>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub source_updated_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub synced_at: OffsetDateTime,
+}
+
+/// A course announcement.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Announcement {
+    pub external_id: String,
+    pub course_external_id: String,
+    pub account_id: Uuid,
+    pub text: String,
+    pub author_name: Option<String>,
+    pub alternate_link: Option<String>,
+    #[serde(default)]
+    pub materials: Vec<MaterialRef>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub source_created_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub source_updated_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub synced_at: OffsetDateTime,
+}
+
+/// A file in the user's cloud storage. Metadata only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriveFile {
+    pub external_id: String,
+    pub account_id: Uuid,
+    pub name: String,
+    pub mime_type: String,
+    /// Absent for files the provider does not report a size for, which
+    /// includes native editor documents.
+    pub size_bytes: Option<u64>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub modified_at: Option<OffsetDateTime>,
+    pub web_view_link: Option<String>,
+    pub is_folder: bool,
+    /// Parent folder identifiers, as reported by the provider.
+    #[serde(default)]
+    pub parents: Vec<String>,
+}
+
+/// The body of a file small enough and simple enough to read inline.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DriveFileContent {
+    pub external_id: String,
+    pub account_id: Uuid,
+    pub name: String,
+    pub mime_type: String,
+    pub text: String,
+    /// True when the provider gave us more than the configured ceiling and the
+    /// text above is the leading portion rather than the whole file. The UI
+    /// must say so rather than implying a complete read.
+    pub truncated: bool,
+}
+
+/// One obligation with a deadline, normalised across sources so the overview
+/// and the scheduler can treat Classroom coursework and a manual task the
+/// same way.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcademicDeadline {
+    /// Set when a task row backs this deadline.
+    pub task_id: Option<Uuid>,
+    pub source: AcademicSource,
+    /// Provider identifier, when the deadline came from one.
+    pub external_id: Option<String>,
+    pub account_id: Option<Uuid>,
+    pub title: String,
+    /// Human-facing origin, e.g. the course name.
+    pub context: Option<String>,
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub due_at: Option<OffsetDateTime>,
+    pub is_overdue: bool,
+    pub is_completed: bool,
+    pub alternate_link: Option<String>,
+}
+
+/// The Academic Overview payload. Every number here is counted from rows, not
+/// inferred by a model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AcademicOverview {
+    pub course_count: usize,
+    pub due_this_week: usize,
+    pub overdue: usize,
+    pub recent_announcement_count: usize,
+    /// Nearest deadlines first.
+    pub upcoming: Vec<AcademicDeadline>,
+    pub recent_announcements: Vec<Announcement>,
+    /// When the oldest contributing cache was last refreshed. `None` when
+    /// nothing has ever synced.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub oldest_synced_at: Option<OffsetDateTime>,
+}
+
+/// Result of importing coursework into tasks.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AcademicSyncResult {
+    pub courses_synced: usize,
+    pub coursework_synced: usize,
+    pub announcements_synced: usize,
+    pub tasks_created: usize,
+    pub tasks_updated: usize,
+    /// Imported tasks left alone because the user had edited the field the
+    /// provider wanted to change.
+    pub tasks_skipped_user_edited: usize,
 }

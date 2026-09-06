@@ -8,7 +8,7 @@
  */
 
 /** Must equal `assistant_protocol::PROTOCOL_VERSION`. */
-export const PROTOCOL_VERSION = 4;
+export const PROTOCOL_VERSION = 5;
 
 export type HealthStatus = "ok" | "degraded";
 
@@ -275,4 +275,118 @@ export interface FreeSlot {
   start_time: string;
   end_time: string;
   duration_minutes: number;
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 6 -- academic intelligence
+// ---------------------------------------------------------------------------
+//
+// Mirrors the types at the end of `crates/assistant-protocol/src/lib.rs`.
+// Nothing here names Google: the server normalises before it answers.
+
+export type AcademicSource = "manual" | "google_classroom" | "gmail" | "calendar" | "drive";
+
+export interface Course {
+  external_id: string;
+  account_id: string;
+  name: string;
+  section?: string | null;
+  description?: string | null;
+  room?: string | null;
+  teacher_name?: string | null;
+  state: string;
+  alternate_link?: string | null;
+  source_updated_at?: string | null;
+  /** When the server last heard from the provider. Used to mark stale data. */
+  synced_at: string;
+}
+
+export interface MaterialRef {
+  title?: string | null;
+  link?: string | null;
+  kind?: string | null;
+}
+
+export interface CourseworkItem {
+  external_id: string;
+  course_external_id: string;
+  account_id: string;
+  title: string;
+  description?: string | null;
+  state: string;
+  alternate_link?: string | null;
+  /** `null` means the assignment has no deadline, never "unknown". */
+  due_at?: string | null;
+  max_points?: number | null;
+  work_type?: string | null;
+  materials: MaterialRef[];
+  source_updated_at?: string | null;
+  synced_at: string;
+}
+
+export interface Announcement {
+  external_id: string;
+  course_external_id: string;
+  account_id: string;
+  text: string;
+  author_name?: string | null;
+  alternate_link?: string | null;
+  materials: MaterialRef[];
+  source_created_at?: string | null;
+  source_updated_at?: string | null;
+  synced_at: string;
+}
+
+export interface DriveFile {
+  external_id: string;
+  account_id: string;
+  name: string;
+  mime_type: string;
+  size_bytes?: number | null;
+  modified_at?: string | null;
+  web_view_link?: string | null;
+  is_folder: boolean;
+  parents: string[];
+}
+
+export interface DriveFileContent {
+  external_id: string;
+  account_id: string;
+  name: string;
+  mime_type: string;
+  text: string;
+  /** True when only the leading portion of the file is present. */
+  truncated: boolean;
+}
+
+export interface AcademicDeadline {
+  task_id?: string | null;
+  source: AcademicSource;
+  external_id?: string | null;
+  account_id?: string | null;
+  title: string;
+  context?: string | null;
+  due_at?: string | null;
+  is_overdue: boolean;
+  is_completed: boolean;
+  alternate_link?: string | null;
+}
+
+export interface AcademicOverview {
+  course_count: number;
+  due_this_week: number;
+  overdue: number;
+  recent_announcement_count: number;
+  upcoming: AcademicDeadline[];
+  recent_announcements: Announcement[];
+  oldest_synced_at?: string | null;
+}
+
+export interface AcademicSyncResult {
+  courses_synced: number;
+  coursework_synced: number;
+  announcements_synced: number;
+  tasks_created: number;
+  tasks_updated: number;
+  tasks_skipped_user_edited: number;
 }

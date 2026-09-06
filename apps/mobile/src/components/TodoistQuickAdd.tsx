@@ -180,32 +180,38 @@ export default function TodoistQuickAdd({
     <Box
       sx={{
         position: "fixed",
-        inset: 0,
-        zIndex: 1300,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        zIndex: 1400,
         display: "flex",
         flexDirection: "column",
         justifyContent: "flex-end",
-        bgcolor: "rgba(0, 0, 0, 0.35)",
+        bgcolor: "rgba(0, 0, 0, 0.4)",
+        backdropFilter: "blur(2px)",
         animation: "fadeIn 0.15s ease-out",
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) handleClose();
       }}
     >
-      {/* Quick Add Card anchored above keyboard — Pure Light Canvas */}
+      {/* Quick Add Card anchored above keyboard — Pure Light Canvas Overlay */}
       <Box
         sx={{
           bgcolor: "#FFFFFF",
           color: "#202020",
-          borderTopLeftRadius: 20,
-          borderTopRightRadius: 20,
+          borderTopLeftRadius: 24,
+          borderTopRightRadius: 24,
           borderTop: "1px solid #EEEEEE",
           p: 2,
-          pb: `calc(12px + env(safe-area-inset-bottom))`,
-          boxShadow: "0 -8px 30px rgba(0,0,0,0.15)",
+          pb: `calc(16px + env(safe-area-inset-bottom))`,
+          boxShadow: "0 -10px 40px rgba(0,0,0,0.2)",
           display: "flex",
           flexDirection: "column",
           gap: 1.5,
+          position: "relative",
+          zIndex: 1401,
         }}
       >
         {/* Task Title Input */}

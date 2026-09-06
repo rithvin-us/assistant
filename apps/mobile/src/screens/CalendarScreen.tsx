@@ -287,55 +287,65 @@ export default function CalendarScreen({ onBack }: CalendarScreenProps) {
 
 
   const handleCreateEvent = async () => {
-
     if (!selectedAccountId || !newTitle.trim()) return;
 
     try {
-
       setSavingEvent(true);
+      setErrorMessage(null);
 
-      const startIso = `${newDate}T${newStartTime}:00Z`;
+      // Parse Date & Start/End time cleanly
+      const [year, month, day] = newDate.split("-").map(Number);
+      const [startHour, startMin] = (newStartTime || "10:00").split(":").map(Number);
+      let [endHour, endMin] = (newEndTime || "11:00").split(":").map(Number);
 
-      const endIso = `${newDate}T${newEndTime}:00Z`;
+      const startDate = new Date(year, month - 1, day, startHour, startMin, 0);
+      let endDate = new Date(year, month - 1, day, endHour, endMin, 0);
+
+      // If end time is before or equal to start time, automatically set end time to 1 hour after start time
+      if (endDate <= startDate) {
+        endDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+      }
+
+      const startIso = startDate.toISOString();
+      const endIso = endDate.toISOString();
 
       await createCalendarEvent(selectedAccountId, {
-
         account_id: selectedAccountId,
-
         title: newTitle.trim(),
-
         start_time: startIso,
-
         end_time: endIso,
-
         location: newLocation.trim() || undefined,
-
         description: newDescription.trim() || undefined,
-
       });
 
       setCreateModalOpen(false);
-
       setNewTitle("");
-
       setNewLocation("");
-
       setNewDescription("");
-
       await loadEvents();
-
     } catch (err: unknown) {
-
-      const msg = err instanceof Error ? err.message : "Failed to create event";
-
+      let msg = "Failed to create event";
+      if (err instanceof Error) {
+        msg = err.message;
+        if (msg.includes("timeRangeEmpty") || msg.includes("timeMax")) {
+          msg = "Event end time must be after start time.";
+        } else {
+          try {
+            const match = msg.match(/\{[\s\S]*\}/);
+            if (match) {
+              const parsed = JSON.parse(match[0]);
+              if (parsed?.error?.message) msg = parsed.error.message;
+              else if (parsed?.message) msg = parsed.message;
+            }
+          } catch {
+            // keep raw
+          }
+        }
+      }
       setErrorMessage(msg);
-
     } finally {
-
       setSavingEvent(false);
-
     }
-
   };
 
 
