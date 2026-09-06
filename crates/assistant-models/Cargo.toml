@@ -14,6 +14,8 @@ mock = []
 # use it does not link reqwest, and so `assistant-core` can never depend on it
 # transitively. See docs/DECISIONS.md ADR-0018.
 anthropic = ["dep:reqwest", "dep:tokio", "dep:tracing"]
+# The OpenAI Chat Completions API provider.
+openai = ["dep:reqwest", "dep:tokio", "dep:tracing"]
 
 [dependencies]
 assistant-tools = { workspace = true }
@@ -33,9 +35,9 @@ tracing = { workspace = true, optional = true }
 # Without it the mock tests compile away to nothing under
 # `cargo test -p assistant-models`, and only ran at all because another crate's
 # dev-dependency happened to unify the feature during a workspace build.
-# `anthropic` is enabled the same way, so the provider tests compile here
+# `anthropic` and `openai` are enabled the same way, so the provider tests compile here
 # without forcing the feature on any dependent.
-assistant-models = { path = ".", features = ["mock", "anthropic"] }
+assistant-models = { path = ".", features = ["mock", "anthropic", "openai"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
 futures.workspace = true
 # The live smoke test reads ANTHROPIC_API_KEY from a local .env, the same file

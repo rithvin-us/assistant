@@ -9,6 +9,8 @@
 pub mod anthropic;
 #[cfg(feature = "mock")]
 pub mod mock;
+#[cfg(feature = "openai")]
+pub mod openai;
 
 use std::{pin::Pin, time::Duration};
 

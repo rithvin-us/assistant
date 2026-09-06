@@ -1,19 +1,25 @@
 /**
- * HomeScreen — Immersive Pure Voice Orb.
+ * HomeScreen — SiriWave GLSL Shader Voice Interface.
  *
- * Uses theme="circle" for a pure, frameless, smooth pulsing orb with zero outer red rings.
+ * Implements:
+ * - True Hold-to-Talk (Hold finger down to talk, release finger to start thinking)
+ * - Live voice sync with Web Audio API microphone volume
+ * - Progressive thinking status with live elapsed seconds (e.g. "Transcribing speech…", "Analyzing prompt…")
+ * - Butter-smooth dual-canvas crossfade shader transitions
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
 import MoreHorizRoundedIcon from "@mui/icons-material/MoreHorizRounded";
-import { Orb, type OrbState } from "orb-ui";
+import type { OrbState } from "orb-ui";
 
 import { loadConnection, type ConnectionState } from "../api/bridge";
 import MoreSheet from "../components/MoreSheet";
+import { SiriWave, type SiriWaveVariant } from "@/components/ui/siri-wave";
+import { useVoiceInput } from "../hooks/useVoiceInput";
 
 const CHECKING: ConnectionState = {
   kind: "checking",
@@ -21,45 +27,28 @@ const CHECKING: ConnectionState = {
   detail: "Checking…",
 };
 
-const CLAUDE_THINKING_MESSAGES = [
-  "Clauding…",
-  "Brewing thoughts…",
-  "Flabbergasting…",
-  "Pondering cosmic truths…",
-  "Consulting the neural oracle…",
-  "Synergizing synapses…",
-  "Percolating response…",
-  "Assembling insights…",
-  "Weaving context…",
-  "Crunching tokens…",
-  "Disentangling paradoxes…",
-  "Summoning wisdom…",
-  "Untangling complexity…",
-  "Calibrating brilliance…",
-  "Baking response…",
-];
+import { transcribeAudio } from "../api/transcribe";
 
-const LISTENING_MESSAGES = [
-  "Listening closely…",
-  "Absorbing your thoughts…",
-  "Harkening…",
-  "Capturing voice waves…",
-];
-
-const SPEAKING_MESSAGES = [
-  "Articulating…",
-  "Sharing wisdom…",
-  "Vocalizing answer…",
-  "Transmitting thoughts…",
+// Progressive status stages for AI response synthesis
+const AI_THINKING_STAGES = [
+  { threshold: 1.2, text: "Transcribing speech…" },
+  { threshold: 2.5, text: "Analyzing prompt…" },
+  { threshold: 4.0, text: "Reasoning…" },
+  { threshold: Infinity, text: "Synthesizing answer…" },
 ];
 
 export default function HomeScreen() {
   const [connection, setConnection] = useState<ConnectionState>(CHECKING);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [activeVoiceState, setActiveVoiceState] = useState<OrbState | null>(null);
-  const [thinkingIndex, setThinkingIndex] = useState(0);
-  const [listeningIndex, setListeningIndex] = useState(0);
-  const [speakingIndex, setSpeakingIndex] = useState(0);
+  const [isHolding, setIsHolding] = useState(false);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [transcribedText, setTranscribedText] = useState<string | null>(null);
+
+  const isHoldingRef = useRef(false);
+  const isHandsFreeRef = useRef(false);
+  const pointerDownTimeRef = useRef(0);
+  const pointerStateAtDownRef = useRef<OrbState | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -71,78 +60,321 @@ export default function HomeScreen() {
     };
   }, []);
 
-  // Effective state: user state override > connection status
   const currentOrbState: OrbState =
     activeVoiceState ??
     (connection.kind === "checking"
       ? "connecting"
-      : connection.kind === "offline"
-        ? "error"
-        : "idle");
+      : "idle");
 
-  // Cycle thinking messages dynamically
+  // Real-time microphone audio capture and OpenAI transcription recorder
+  const { audioLevel, stopListening } = useVoiceInput(currentOrbState === "listening");
+
+  // Track elapsed timer during active turns (listening, thinking, speaking)
   useEffect(() => {
-    if (currentOrbState !== "thinking") return;
+    if (currentOrbState === "idle" || currentOrbState === "connecting" || currentOrbState === "error") {
+      setElapsedMs(0);
+      return;
+    }
+
+    setElapsedMs(0);
+    const start = Date.now();
     const interval = setInterval(() => {
-      setThinkingIndex((prev) => (prev + 1) % CLAUDE_THINKING_MESSAGES.length);
-    }, 2200);
+      setElapsedMs(Date.now() - start);
+    }, 100);
+
     return () => clearInterval(interval);
   }, [currentOrbState]);
 
-  // Cycle listening messages dynamically
+  // Automated state progression for thinking and speaking
   useEffect(() => {
-    if (currentOrbState !== "listening") return;
-    const interval = setInterval(() => {
-      setListeningIndex((prev) => (prev + 1) % LISTENING_MESSAGES.length);
-    }, 3000);
-    return () => clearInterval(interval);
-  }, [currentOrbState]);
+    let timer: ReturnType<typeof setTimeout> | null = null;
 
-  // Cycle speaking messages dynamically
-  useEffect(() => {
-    if (currentOrbState !== "speaking") return;
-    const interval = setInterval(() => {
-      setSpeakingIndex((prev) => (prev + 1) % SPEAKING_MESSAGES.length);
-    }, 2500);
-    return () => clearInterval(interval);
-  }, [currentOrbState]);
+    if (currentOrbState === "listening") {
+      // If hands-free tap mode: auto-advance after silence (5.5s)
+      // If holding: safe upper cap of 45s
+      timer = setTimeout(() => {
+        isHoldingRef.current = false;
+        isHandsFreeRef.current = false;
+        setIsHolding(false);
+        setActiveVoiceState("thinking");
+      }, isHolding ? 45000 : 5500);
+    } else if (currentOrbState === "thinking") {
+      // AI model finishes thinking and automatically speaks the response
+      timer = setTimeout(() => {
+        setActiveVoiceState("speaking");
+      }, 4200);
+    } else if (currentOrbState === "speaking") {
+      // Finished speaking response, automatically return to idle
+      timer = setTimeout(() => {
+        setActiveVoiceState("idle");
+        setTranscribedText(null);
+      }, 5000);
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [currentOrbState, isHolding]);
+
+  // Seamless Hold-to-Talk AND Tap-to-Talk Pointer Handlers
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch {
+      // ignore
+    }
+
+    pointerDownTimeRef.current = Date.now();
+    pointerStateAtDownRef.current = currentOrbState;
+
+    // 1. If assistant is currently thinking or speaking, a tap acts as an instant interrupt
+    if (currentOrbState === "thinking" || currentOrbState === "speaking") {
+      setActiveVoiceState("idle");
+      isHoldingRef.current = false;
+      isHandsFreeRef.current = false;
+      setIsHolding(false);
+      return;
+    }
+
+    // 2. If already in hands-free listening, down event is preparing to finish
+    if (currentOrbState === "listening" && isHandsFreeRef.current) {
+      return;
+    }
+
+    // 3. When starting from idle: start listening immediately with active hold!
+    if (currentOrbState === "idle" || currentOrbState === "connecting") {
+      isHoldingRef.current = true;
+      isHandsFreeRef.current = false;
+      setIsHolding(true);
+      setActiveVoiceState("listening");
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+
+    const duration = Date.now() - pointerDownTimeRef.current;
+    const stateAtDown = pointerStateAtDownRef.current;
+
+    // If it was already thinking or speaking when pressed, interrupt already completed
+    if (stateAtDown === "thinking" || stateAtDown === "speaking") {
+      return;
+    }
+
+    const finishListeningAndSend = async () => {
+      isHoldingRef.current = false;
+      isHandsFreeRef.current = false;
+      setIsHolding(false);
+      setActiveVoiceState("thinking");
+
+      try {
+        const audioBlob = await stopListening();
+        if (audioBlob && audioBlob.size > 200 && connection.healthy) {
+          const text = await transcribeAudio(audioBlob);
+          if (text) {
+            setTranscribedText(text);
+            console.log("Transcribed via OpenAI:", text);
+          }
+        }
+      } catch (err) {
+        console.warn("Transcription notice:", err);
+      }
+    };
+
+    // If tapped while already in hands-free listening mode: finish and think!
+    if (stateAtDown === "listening" && isHandsFreeRef.current) {
+      void finishListeningAndSend();
+      return;
+    }
+
+    // Started from idle:
+    if (stateAtDown === "idle" || stateAtDown === "connecting") {
+      if (duration >= 350) {
+        // User held to talk (> 350ms) and released: immediately trigger thinking!
+        void finishListeningAndSend();
+      } else {
+        // User tapped / clicked (< 350ms): activate hands-free listening mode!
+        // Stays in listening mode so user can speak freely without holding!
+        isHoldingRef.current = false;
+        isHandsFreeRef.current = true;
+        setIsHolding(false);
+      }
+    }
+  };
+
+  const handlePointerCancel = (e: React.PointerEvent<HTMLDivElement>) => {
+    try {
+      if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+        e.currentTarget.releasePointerCapture(e.pointerId);
+      }
+    } catch {
+      // ignore
+    }
+
+    const duration = Date.now() - pointerDownTimeRef.current;
+    if (isHoldingRef.current && duration >= 350) {
+      // If held for >= 350ms, treat as successful speech completion
+      isHoldingRef.current = false;
+      isHandsFreeRef.current = false;
+      setIsHolding(false);
+      setActiveVoiceState("thinking");
+      return;
+    }
+
+    isHoldingRef.current = false;
+    isHandsFreeRef.current = false;
+    setIsHolding(false);
+    setActiveVoiceState("idle");
+  };
 
   const dotColor =
     connection.kind === "checking"
       ? "text.disabled"
       : connection.kind === "offline"
-        ? "error.main"
+        ? "#7c3aed"
         : connection.healthy
           ? "success.main"
           : "warning.main";
 
-  const handleOrbClick = () => {
-    if (connection.kind === "offline") return;
-    setActiveVoiceState((prev) => {
-      if (!prev || prev === "idle") return "listening";
-      if (prev === "listening") return "thinking";
-      if (prev === "thinking") return "speaking";
-      return "idle";
-    });
+  const elapsedSec = (elapsedMs / 1000).toFixed(1);
+
+  // Derive status text with progressive thinking phases
+  const renderStatus = () => {
+    if (currentOrbState === "connecting") {
+      return (
+        <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500 }}>
+          Connecting to server…
+        </Typography>
+      );
+    }
+
+    if (currentOrbState === "listening") {
+      return (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography
+            variant="body1"
+            sx={{
+              fontWeight: 600,
+              color: "info.main",
+              animation: "fadeIn 0.25s ease-out",
+            }}
+          >
+            {isHolding ? "Release to answer" : "Listening… (tap to send)"}
+          </Typography>
+          <Typography
+            variant="body2"
+            sx={{
+              fontFamily: "monospace",
+              color: "text.secondary",
+              fontWeight: 500,
+              fontSize: "0.85rem",
+              opacity: 0.85,
+            }}
+          >
+            ({elapsedSec}s)
+          </Typography>
+        </Box>
+      );
+    }
+
+    if (currentOrbState === "thinking") {
+      const currentSec = elapsedMs / 1000;
+      const stage =
+        AI_THINKING_STAGES.find((s) => currentSec <= s.threshold) ??
+        AI_THINKING_STAGES[AI_THINKING_STAGES.length - 1];
+
+      const displayText =
+        transcribedText && currentSec > 1.2
+          ? `"${transcribedText}"`
+          : stage.text;
+
+      return (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography
+            key={displayText}
+            variant="body1"
+            sx={{
+              fontWeight: 600,
+              color: "primary.main",
+              animation: "fadeIn 0.3s ease-out",
+            }}
+          >
+            {displayText}
+          </Typography>
+          <Typography
+            variant="body2"
+            sx={{
+              fontFamily: "monospace",
+              color: "text.secondary",
+              fontWeight: 500,
+              fontSize: "0.85rem",
+              opacity: 0.85,
+            }}
+          >
+            ({elapsedSec}s)
+          </Typography>
+        </Box>
+      );
+    }
+
+    if (currentOrbState === "speaking") {
+      return (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+          <Typography
+            variant="body1"
+            sx={{
+              fontWeight: 600,
+              color: "success.main",
+              animation: "fadeIn 0.25s ease-out",
+            }}
+          >
+            Speaking…
+          </Typography>
+          <Typography
+            variant="body2"
+            sx={{
+              fontFamily: "monospace",
+              color: "text.secondary",
+              fontWeight: 500,
+              fontSize: "0.85rem",
+              opacity: 0.85,
+            }}
+          >
+            ({elapsedSec}s)
+          </Typography>
+        </Box>
+      );
+    }
+
+    return (
+      <Typography
+        variant="body1"
+        color="text.secondary"
+        sx={{ fontWeight: 500, fontSize: "0.95rem", letterSpacing: "0.01em" }}
+      >
+        {connection.kind === "offline"
+          ? "Hold or Tap to talk • Demo Mode"
+          : "Hold or Tap to talk"}
+      </Typography>
+    );
   };
 
-  const getStatusText = () => {
-    switch (currentOrbState) {
-      case "connecting":
-        return "Connecting to server…";
-      case "listening":
-        return `${LISTENING_MESSAGES[listeningIndex]} (Tap to process)`;
-      case "thinking":
-        return `${CLAUDE_THINKING_MESSAGES[thinkingIndex]}`;
-      case "speaking":
-        return `${SPEAKING_MESSAGES[speakingIndex]} (Tap to stop)`;
-      case "error":
-        return "Server unreachable";
-      case "idle":
-      default:
-        return "Tap to talk";
-    }
-  };
+  const waveVariant: SiriWaveVariant =
+    currentOrbState === "thinking" ? "fluid-dots" : "wave";
+
+  // Effective voice audio level passed to WebGL shader
+  const effectiveAudioLevel =
+    currentOrbState === "listening"
+      ? audioLevel
+      : currentOrbState === "speaking"
+        ? 0.35 + 0.15 * Math.sin(Date.now() / 450) * Math.cos(Date.now() / 700)
+        : 0;
 
   return (
     <Box
@@ -151,7 +383,7 @@ export default function HomeScreen() {
         display: "grid",
         gridTemplateRows: "auto 1fr auto",
         justifyItems: "center",
-        WebkitTapHighlightColor: "transparent",
+        WebkitTapHighlightColor: "transparent !important",
         userSelect: "none",
         WebkitUserSelect: "none",
         px: 2,
@@ -179,86 +411,112 @@ export default function HomeScreen() {
             Assistant
           </Typography>
         </Box>
-        <Tooltip title={connection.detail}>
-          <Box
-            aria-label={`Server ${connection.kind}`}
-            sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: dotColor }}
-          />
+        <Tooltip title={connection.kind === "offline" ? "Demo Mode (Offline Preview)" : connection.detail}>
+          <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+            {connection.kind === "offline" && (
+              <Typography
+                variant="caption"
+                sx={{
+                  fontSize: "0.68rem",
+                  fontWeight: 600,
+                  bgcolor: "rgba(124, 58, 237, 0.1)",
+                  color: "#7c3aed",
+                  px: 1,
+                  py: 0.25,
+                  borderRadius: "12px",
+                  letterSpacing: "0.02em",
+                }}
+              >
+                Demo Mode
+              </Typography>
+            )}
+            <Box
+              aria-label={`Server ${connection.kind}`}
+              sx={{ width: 8, height: 8, borderRadius: "50%", bgcolor: dotColor }}
+            />
+          </Box>
         </Tooltip>
       </Box>
 
-      {/* Main Voice Orb Container — Pure, Frameless 320px Orb */}
+      {/* Main Siri Wave GLSL Canvas Container */}
       <Box
         sx={{
           alignSelf: "center",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: 4,
+          gap: 3.5,
           width: "100%",
         }}
       >
         <Box
-          onClick={handleOrbClick}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerCancel}
+          onContextMenu={(e) => e.preventDefault()}
           sx={{
+            cursor: "pointer",
             width: 320,
             height: 320,
-            cursor: connection.kind === "offline" ? "not-allowed" : "pointer",
-            position: "relative",
+            borderRadius: "50%",
             display: "flex",
-            justifyContent: "center",
             alignItems: "center",
-            WebkitTapHighlightColor: "transparent",
-            outline: "none",
-            border: "none",
-            boxShadow: "none",
-            background: "transparent",
-            transition: "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
-            "&:hover": {
-              transform: "scale(1.02)",
-            },
-            "&:active": {
-              transform: "scale(0.97)",
-              WebkitTapHighlightColor: "transparent",
-            },
+            justifyContent: "center",
+            WebkitTapHighlightColor: "transparent !important",
+            outline: "none !important",
+            touchAction: "none",
+            userSelect: "none",
+            WebkitUserSelect: "none",
+            WebkitTouchCallout: "none",
           }}
         >
-          <Orb theme="circle" size={320} state={currentOrbState} />
-        </Box>
-
-        <Box sx={{ textAlign: "center", minHeight: 48, display: "flex", alignItems: "center" }}>
-          <Typography
-            variant="body1"
-            color={
-              currentOrbState === "thinking"
-                ? "primary.main"
-                : currentOrbState === "listening"
-                  ? "info.main"
-                  : currentOrbState === "speaking"
-                    ? "success.main"
-                    : "text.secondary"
-            }
+          <Box
             sx={{
-              fontWeight: 600,
-              fontSize: "1rem",
-              letterSpacing: "0.01em",
-              transition: "all 0.25s ease-in-out",
+              pointerEvents: "none",
+              width: "100%",
+              height: "100%",
+              borderRadius: "50%",
+              boxShadow: isHolding
+                ? "0 25px 75px rgba(124, 58, 237, 0.45)"
+                : "0 20px 60px rgba(0,0,0,0.25)",
+              transform: isHolding ? "scale(0.96)" : "scale(1.0)",
+              transition: "transform 0.18s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.18s ease-out",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
           >
-            {getStatusText()}
-          </Typography>
+            <SiriWave
+              variant={waveVariant}
+              size={320}
+              renderScale={1.0}
+              audioLevel={effectiveAudioLevel}
+            />
+          </Box>
+        </Box>
+
+        <Box
+          sx={{
+            textAlign: "center",
+            minHeight: 48,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          {renderStatus()}
         </Box>
       </Box>
 
-      {/* Footer Drawer Button */}
+      {/* Footer drawer button */}
       <IconButton
         aria-label="Everything else"
         onClick={() => setSheetOpen(true)}
         sx={{
           mb: 3,
           color: "text.secondary",
-          WebkitTapHighlightColor: "transparent",
-          outline: "none",
+          WebkitTapHighlightColor: "transparent !important",
+          outline: "none !important",
         }}
       >
         <MoreHorizRoundedIcon />

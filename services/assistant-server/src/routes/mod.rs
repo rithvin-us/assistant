@@ -5,8 +5,12 @@
 
 pub mod conversation;
 pub mod health;
+pub mod transcribe;
 
-use axum::{Router, middleware, routing::get};
+use axum::{
+    Router, middleware,
+    routing::{get, post},
+};
 
 use crate::{auth, state::SharedState};
 
@@ -15,6 +19,7 @@ pub fn router(state: SharedState) -> Router {
 
     let protected = Router::new()
         .route("/v1/conversation/{id}/stream", get(conversation::stream))
+        .route("/v1/audio/transcribe", post(transcribe::transcribe))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,

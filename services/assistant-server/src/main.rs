@@ -32,7 +32,7 @@ async fn main() -> anyhow::Result<()> {
             // yet refusing to boot would also block frontend work. Log loudly,
             // report degraded via /v1/health, continue.
             Err(error) => {
-                tracing::error!(%error, "DATABASE_URL is set but unreachable; continuing degraded");
+                tracing::error!(error = %error, "DATABASE_URL is set but unreachable; continuing degraded");
                 None
             }
         },
@@ -70,9 +70,9 @@ async fn main() -> anyhow::Result<()> {
     // than a fabricated reply.
     //
     // Only the *presence* of the credential is logged, never any part of it.
-    let model = match config.anthropic() {
+    let model = match config.openai() {
         Some(provider_config) => {
-            match assistant_models::anthropic::AnthropicModelProvider::new(provider_config) {
+            match assistant_models::openai::OpenAIModelProvider::new(provider_config) {
                 Ok(provider) => {
                     tracing::info!(
                         provider = provider.name(),
@@ -84,14 +84,14 @@ async fn main() -> anyhow::Result<()> {
                 Err(error) => {
                     tracing::error!(
                         code = error.code(),
-                        "ANTHROPIC_API_KEY is set but the provider could not be built"
+                        "OPENAI_API_KEY is set but the provider could not be built"
                     );
                     None
                 }
             }
         }
         None => {
-            tracing::warn!("ANTHROPIC_API_KEY is not set; running without a model provider");
+            tracing::warn!("OPENAI_API_KEY is not set; running without a model provider");
             None
         }
     };
@@ -130,7 +130,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn shutdown_signal() {
     if let Err(error) = tokio::signal::ctrl_c().await {
-        tracing::error!(%error, "failed to install ctrl-c handler");
+        tracing::error!(error = %error, "failed to install ctrl-c handler");
     }
     tracing::info!("shutdown signal received");
 }

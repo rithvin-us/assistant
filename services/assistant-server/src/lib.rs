@@ -41,12 +41,21 @@ pub fn app(
         orchestration::Settings::from_config(config),
     );
 
+    let http = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+
     let state = Arc::new(AppState {
         verifier: Arc::new(DevTokenVerifier::new(config.dev_auth_token.clone())),
         events,
         orchestrator: Arc::new(orchestrator),
         approvals,
         db,
+        http,
+        openai_api_key: config.openai_api_key.clone(),
+        openai_transcription_model: config.openai_transcription_model.clone(),
+        openai_transcription_language: config.openai_transcription_language.clone(),
     });
 
     let origins: Vec<HeaderValue> = config

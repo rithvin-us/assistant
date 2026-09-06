@@ -32,13 +32,12 @@ fn config() -> Config {
         allowed_origins: vec!["http://localhost:1420".to_string()],
         log_filter: "off".to_string(),
         max_tool_rounds: 4,
-        // No credential: these tests drive the mock provider, and a real one
-        // must never be reachable from the suite.
-        anthropic_api_key: None,
+        openai_api_key: None,
+        openai_transcription_model: "whisper-1".to_string(),
+        openai_transcription_language: None,
         model: "test-model".to_string(),
         model_max_output_tokens: 1024,
         model_timeout: std::time::Duration::from_secs(5),
-        model_effort: None,
         context_max_messages: 40,
     }
 }
@@ -859,4 +858,48 @@ async fn the_deterministic_path_is_persisted_and_still_never_reaches_the_model()
 
     assert_eq!(model.calls(), 0, "a deterministic turn called the model");
     assert_eq!(store.all().len(), 2, "the exchange was not recorded");
+}
+
+#[tokio::test]
+async fn transcribe_requires_auth() {
+    let addr = spawn_with(Dependencies::default()).await;
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("http://{addr}/v1/audio/transcribe"))
+        .body("dummy audio")
+        .send()
+        .await
+        .expect("request sent");
+
+    assert_eq!(res.status(), reqwest::StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn transcribe_rejects_empty_audio() {
+    let addr = spawn_with(Dependencies::default()).await;
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("http://{addr}/v1/audio/transcribe"))
+        .bearer_auth(TEST_TOKEN)
+        .body("")
+        .send()
+        .await
+        .expect("request sent");
+
+    assert_eq!(res.status(), reqwest::StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn transcribe_without_key_reports_service_unavailable() {
+    let addr = spawn_with(Dependencies::default()).await;
+    let client = reqwest::Client::new();
+    let res = client
+        .post(format!("http://{addr}/v1/audio/transcribe"))
+        .bearer_auth(TEST_TOKEN)
+        .body("dummy audio bytes")
+        .send()
+        .await
+        .expect("request sent");
+
+    assert_eq!(res.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
 }

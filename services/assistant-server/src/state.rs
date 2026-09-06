@@ -21,6 +21,10 @@ pub struct AppState {
     pub approvals: Option<Arc<ApprovalCoordinator>>,
     /// `None` when no `DATABASE_URL` was configured.
     pub db: Option<PgPool>,
+    pub http: reqwest::Client,
+    pub openai_api_key: Option<String>,
+    pub openai_transcription_model: String,
+    pub openai_transcription_language: Option<String>,
 }
 
 impl AppState {

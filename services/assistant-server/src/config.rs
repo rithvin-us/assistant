@@ -6,7 +6,7 @@
 
 use std::{fmt, net::SocketAddr, path::PathBuf, time::Duration};
 
-use assistant_models::anthropic::{AnthropicConfig, Effort};
+use assistant_models::openai::OpenAIConfig;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -31,36 +31,25 @@ pub struct Config {
     /// `RUST_LOG`-style filter.
     pub log_filter: String,
     /// Hard ceiling on rounds of tool execution within one turn.
-    ///
-    /// The server owns this, not the core and certainly not the model: it is the
-    /// only thing standing between a confused model and an unbounded spend.
     pub max_tool_rounds: usize,
 
-    /// The Anthropic credential.
-    ///
-    /// Server-only, and read here and nowhere else. `None` is a supported
-    /// deployment: the deterministic path still answers and a turn that needs a
-    /// model fails with `no_model_provider` rather than a fabricated reply.
-    pub anthropic_api_key: Option<String>,
-    /// Model identifier. Named once, here.
+    /// The OpenAI credential.
+    pub openai_api_key: Option<String>,
+    /// Model used for audio transcription (e.g. whisper-1).
+    pub openai_transcription_model: String,
+    /// Language hint for audio transcription (e.g. en).
+    pub openai_transcription_language: Option<String>,
+    /// Model identifier for completions. Named once, here.
     pub model: String,
     pub model_max_output_tokens: u32,
     pub model_timeout: Duration,
-    /// Reasoning effort. `None` omits the field entirely, for a model that does
-    /// not accept it.
-    pub model_effort: Option<Effort>,
-    /// How many past messages may be replayed to the model. The character bound
-    /// that accompanies it is a core default; this is the knob an operator has
-    /// a reason to turn.
+    /// How many past messages may be replayed to the model.
     pub context_max_messages: usize,
 }
 
 impl Config {
     /// Loads `.env` if present, then reads the environment.
     pub fn from_env() -> Result<Self, ConfigError> {
-        // Missing .env is normal in deployment; a malformed one is not, but
-        // dotenvy reports both the same way, so only the value reads below can
-        // fail hard.
         let _ = dotenvy::dotenv();
 
         let bind_addr = env_or("ASSISTANT_BIND_ADDR", "0.0.0.0:8787")
@@ -75,7 +64,7 @@ impl Config {
         if dev_auth_token.trim().is_empty() {
             return Err(ConfigError::Invalid {
                 name: "DEV_AUTH_TOKEN",
-                reason: "must not be empty".into(),
+                reason: "cannot be empty".into(),
             });
         }
 
@@ -98,43 +87,30 @@ impl Config {
                     reason: format!("{e}"),
                 })?,
 
-            // Read, never printed. The only thing logged about it is whether it
-            // is present -- see `Debug` below and the startup log line.
-            anthropic_api_key: std::env::var("ANTHROPIC_API_KEY")
+            openai_api_key: std::env::var("OPENAI_API_KEY")
                 .ok()
                 .map(|key| key.trim().to_string())
                 .filter(|key| !key.is_empty()),
-            model: env_or("ASSISTANT_MODEL", AnthropicConfig::DEFAULT_MODEL),
+            openai_transcription_model: env_or("OPENAI_TRANSCRIPTION_MODEL", "whisper-1"),
+            openai_transcription_language: std::env::var("OPENAI_TRANSCRIPTION_LANGUAGE")
+                .ok()
+                .map(|l| l.trim().to_string())
+                .filter(|l| !l.is_empty()),
+            model: env_or("ASSISTANT_MODEL", OpenAIConfig::DEFAULT_MODEL),
             model_max_output_tokens: parse_env("ASSISTANT_MODEL_MAX_OUTPUT_TOKENS", "4096")?,
             model_timeout: Duration::from_millis(parse_env("ASSISTANT_MODEL_TIMEOUT_MS", "60000")?),
-            model_effort: {
-                let raw = env_or("ASSISTANT_MODEL_EFFORT", "low");
-                if raw.eq_ignore_ascii_case("none") {
-                    None
-                } else {
-                    Some(Effort::parse(&raw).ok_or(ConfigError::Invalid {
-                        name: "ASSISTANT_MODEL_EFFORT",
-                        reason: "expected one of low, medium, high, xhigh, max, none".into(),
-                    })?)
-                }
-            },
             context_max_messages: parse_env("ASSISTANT_CONTEXT_MAX_MESSAGES", "40")?,
         })
     }
 
     /// Builds the provider configuration, when this deployment has a credential.
-    ///
-    /// Assembling it here keeps every environment read in one file: the
-    /// provider itself reads nothing.
-    pub fn anthropic(&self) -> Option<AnthropicConfig> {
-        let key = self.anthropic_api_key.as_ref()?;
-        Some(
-            AnthropicConfig::new(key)
-                .with_model(&self.model)
-                .with_max_output_tokens(self.model_max_output_tokens)
-                .with_timeout(self.model_timeout)
-                .with_effort(self.model_effort),
-        )
+    pub fn openai(&self) -> Option<OpenAIConfig> {
+        let key = self.openai_api_key.as_ref()?;
+        let mut cfg = OpenAIConfig::new(key);
+        cfg.model = self.model.clone();
+        cfg.max_output_tokens = self.model_max_output_tokens;
+        cfg.timeout = self.model_timeout;
+        Some(cfg)
     }
 
     /// Path to the SQL migrations directory, relative to the workspace root.
@@ -163,8 +139,7 @@ fn env_or(name: &str, default: &str) -> String {
         .unwrap_or_else(|| default.to_string())
 }
 
-/// Redacts every secret. Adding a secret field to `Config` without adding it
-/// here as `<redacted>` is the one mistake this impl exists to prevent.
+/// Redacts every secret.
 impl fmt::Debug for Config {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Config")
@@ -177,16 +152,18 @@ impl fmt::Debug for Config {
             .field("allowed_origins", &self.allowed_origins)
             .field("log_filter", &self.log_filter)
             .field("max_tool_rounds", &self.max_tool_rounds)
-            // Presence, never the value: whether a provider is configured is
-            // operationally important and is not itself a secret.
             .field(
-                "anthropic_api_key",
-                &self.anthropic_api_key.as_ref().map(|_| "<redacted>"),
+                "openai_api_key",
+                &self.openai_api_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("openai_transcription_model", &self.openai_transcription_model)
+            .field(
+                "openai_transcription_language",
+                &self.openai_transcription_language,
             )
             .field("model", &self.model)
             .field("model_max_output_tokens", &self.model_max_output_tokens)
             .field("model_timeout", &self.model_timeout)
-            .field("model_effort", &self.model_effort)
             .field("context_max_messages", &self.context_max_messages)
             .finish()
     }
