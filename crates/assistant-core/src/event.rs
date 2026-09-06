@@ -15,9 +15,50 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum DomainEvent {
-    ServerStarted { version: String },
-    ConversationOpened { conversation_id: Uuid },
-    ConversationClosed { conversation_id: Uuid },
+    ServerStarted {
+        version: String,
+    },
+    ConversationOpened {
+        conversation_id: Uuid,
+    },
+    ConversationClosed {
+        conversation_id: Uuid,
+    },
+
+    // Orchestration. Every variant below is emitted by the orchestrator and is
+    // safe to persist to an audit log: none carries user message content, tool
+    // arguments or tool output.
+    TurnStarted {
+        turn_id: Uuid,
+        conversation_id: Uuid,
+    },
+    AssistantStarted {
+        turn_id: Uuid,
+    },
+    /// The model asked for a tool. `risk` is the authoritative value from the
+    /// registered spec, never anything the model supplied.
+    ToolProposed {
+        name: String,
+        risk: assistant_tools::RiskLevel,
+    },
+    ApprovalRequested {
+        name: String,
+        risk: assistant_tools::RiskLevel,
+    },
+    ToolCompleted {
+        name: String,
+        ok: bool,
+    },
+    TurnCompleted {
+        turn_id: Uuid,
+        mode: crate::turn::ExecutionMode,
+        rounds: usize,
+    },
+    TurnFailed {
+        turn_id: Uuid,
+        /// Stable discriminant from `CoreError::code`, never the message.
+        code: String,
+    },
 }
 
 /// A published event plus the metadata every subscriber needs.

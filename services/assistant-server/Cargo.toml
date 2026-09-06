@@ -9,7 +9,9 @@ license.workspace = true
 [dependencies]
 assistant-auth.workspace = true
 assistant-core.workspace = true
+assistant-models.workspace = true
 assistant-protocol.workspace = true
+assistant-tools.workspace = true
 
 axum.workspace = true
 tokio.workspace = true
@@ -30,8 +32,12 @@ tracing-subscriber.workspace = true
 
 dotenvy = "0.15"
 futures.workspace = true
+tokio-util.workspace = true
 
 [dev-dependencies]
+# Integration tests drive the real orchestrator with deterministic doubles.
+assistant-core = { workspace = true, features = ["testing"] }
+assistant-models = { workspace = true, features = ["mock"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-tungstenite = "0.28"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }

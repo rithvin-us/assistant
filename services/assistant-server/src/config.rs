@@ -28,6 +28,11 @@ pub struct Config {
     pub allowed_origins: Vec<String>,
     /// `RUST_LOG`-style filter.
     pub log_filter: String,
+    /// Hard ceiling on rounds of tool execution within one turn.
+    ///
+    /// The server owns this, not the core and certainly not the model: it is the
+    /// only thing standing between a confused model and an unbounded spend.
+    pub max_tool_rounds: usize,
 }
 
 impl Config {
@@ -66,6 +71,12 @@ impl Config {
             dev_auth_token,
             allowed_origins,
             log_filter: env_or("RUST_LOG", "assistant_server=debug,tower_http=debug,info"),
+            max_tool_rounds: env_or("ASSISTANT_MAX_TOOL_ROUNDS", "4")
+                .parse()
+                .map_err(|e| ConfigError::Invalid {
+                    name: "ASSISTANT_MAX_TOOL_ROUNDS",
+                    reason: format!("{e}"),
+                })?,
         })
     }
 
@@ -95,6 +106,7 @@ impl fmt::Debug for Config {
             .field("dev_auth_token", &"<redacted>")
             .field("allowed_origins", &self.allowed_origins)
             .field("log_filter", &self.log_filter)
+            .field("max_tool_rounds", &self.max_tool_rounds)
             .finish()
     }
 }

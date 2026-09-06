@@ -7,6 +7,7 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod error;
+pub mod orchestration;
 pub mod routes;
 pub mod state;
 
@@ -14,7 +15,7 @@ use std::sync::Arc;
 
 use assistant_auth::DevTokenVerifier;
 use assistant_core::EventBus;
-use axum::{Router, http::HeaderValue};
+use axum::{Router, extract::Request, http::HeaderValue};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 use crate::{config::Config, state::AppState};
@@ -22,11 +23,21 @@ use crate::{config::Config, state::AppState};
 /// Builds the fully-layered application from already-resolved dependencies.
 ///
 /// The caller owns the [`EventBus`] so that startup and shutdown events can be
-/// published from outside the request path.
-pub fn app(config: &Config, db: Option<sqlx::PgPool>, events: EventBus) -> Router {
+/// published from outside the request path, and supplies the orchestrator's
+/// dependencies -- see [`orchestration::Dependencies`], whose default is a
+/// deployment with no model provider and no tools.
+pub fn app(
+    config: &Config,
+    db: Option<sqlx::PgPool>,
+    events: EventBus,
+    deps: orchestration::Dependencies,
+) -> Router {
+    let orchestrator = orchestration::build(deps, events.clone(), config.max_tool_rounds);
+
     let state = Arc::new(AppState {
         verifier: Arc::new(DevTokenVerifier::new(config.dev_auth_token.clone())),
         events,
+        orchestrator: Arc::new(orchestrator),
         db,
     });
 
@@ -38,10 +49,22 @@ pub fn app(config: &Config, db: Option<sqlx::PgPool>, events: EventBus) -> Route
 
     routes::router(state)
         .layer(
-            // `make_span_with` is left at its default, which records the method and
-            // path but not the query string, so a token passed as `access_token`
-            // never reaches the logs.
-            TraceLayer::new_for_http(),
+            // The span records `uri.path()`, never the full URI.
+            //
+            // This is not cosmetic. The conversation WebSocket accepts its
+            // bearer token as `?access_token=` -- browsers cannot set headers on
+            // a WebSocket handshake -- and `tower_http`'s default span records
+            // the whole URI, query string included. That writes a live
+            // credential into every request log line. Do not replace this with
+            // `TraceLayer::new_for_http()` alone.
+            TraceLayer::new_for_http().make_span_with(|request: &Request| {
+                tracing::info_span!(
+                    "request",
+                    method = %request.method(),
+                    path = %request.uri().path(),
+                    version = ?request.version(),
+                )
+            }),
         )
         .layer(CorsLayer::new().allow_origin(origins))
 }

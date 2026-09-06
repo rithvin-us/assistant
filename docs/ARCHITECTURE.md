@@ -1,8 +1,9 @@
 # Architecture
 
-This describes the shape of the system, not its current feature set. Most of what
-is named here does not exist yet; the point of Milestone 0 is that when it does
-exist, there is an obvious place for it to go.
+This describes the shape of the system. As of Milestone 2 the orchestration spine
+is implemented and tested; the integrations, providers, memory engine and voice
+are still seams. Where something does not exist yet, the point is that there is an
+obvious place for it to go — and that nothing has been faked in the meantime.
 
 ## Layers
 
@@ -48,7 +49,7 @@ touching orchestration — see ADR-0003.
 | Crate | Reason it is separate |
 |---|---|
 | `assistant-protocol` | Shared by the server and the Tauri shell. Must not pull server dependencies into the mobile binary. |
-| `assistant-core` | The one place allowed to know about orchestration. Kept free of integrations so that rule is compiler-enforced. |
+| `assistant-core` | Owns the orchestrator: normalisation, context, routing, the bounded tool loop, permission evaluation, streaming. Kept free of integrations and providers so that rule is compiler-enforced. |
 | `assistant-models` | Provider implementations will be feature-gated. Separating them keeps unused vendor SDKs out of the build. |
 | `assistant-tools` | The risk/permission vocabulary must be usable by policy code that has no business depending on orchestration. |
 | `assistant-auth` | Auth is consumed by the server middleware and, later, by the desktop agent's connection handshake. |
@@ -70,14 +71,51 @@ pay for inference. See the latency notes below.
 ```
 webview → tauri command → WS /v1/conversation/{id}/stream
         → ClientFrame::UserText
-        ← ServerFrame::Ready / AssistantDelta* / TurnEnd
+        → TurnRequest → Orchestrator
+        ← TurnEvent stream, translated to frames:
+          Ready / AssistantDelta* / ToolProposed / ApprovalRequired /
+          ToolCompleted / TurnEnd, or Error
 ```
 
-Assistant output is a stream of deltas terminated by `TurnEnd`. That shape is
-chosen so that adding streamed audio, tool-call frames and barge-in later needs
-new enum variants, not a new transport.
+Assistant output is a stream of deltas terminated by `TurnEnd`. That shape was
+chosen so adding streamed audio and barge-in later needs new enum variants, not a
+new transport.
 
-## Permission flow (designed, not built)
+The Axum handler is transport glue only: it builds a `TurnRequest`, forwards
+`TurnEvent`s, and writes frames. `assistant-core` has never heard of a WebSocket;
+the translation lives in `services/assistant-server/src/orchestration.rs`. See
+`docs/MILESTONE-2.md`.
+
+## Orchestration
+
+```
+TurnRequest -> normalize -> context -> plan
+                                        |
+                    Deterministic ------+------ Model / ModelWithTools
+                          |                            |
+                    handler answers            stream deltas
+                    (no model call)                    |
+                                                 tool calls?
+                                                       |
+                                          registry -> ToolSpec -> policy
+                                                       |
+                                       Allow -> execute -> feed back -> model
+```
+
+Every dependency is injected through a trait; the orchestrator constructs no
+providers, reads no environment variables and holds no global state. Execution
+mode is chosen by code *before* any model is contacted — the model is never asked
+whether it should have been used, because by then the round trip is already paid
+for.
+
+The tool loop is bounded by `max_tool_rounds` (server config, default 4). A turn
+makes at most `max_tool_rounds + 1` model calls, and the limit is checked before
+any tool runs.
+
+Cancellation is a `CancellationToken` owned by the socket, with a child per turn.
+That is the barge-in seam for voice.
+
+## Permission flow
 
 ```
 model proposes a tool call
@@ -91,7 +129,14 @@ model proposes a tool call
 ```
 
 The model never supplies the risk level and never sees the decision function.
-ADR-0005 explains why.
+ADR-0005 explains why; the mechanism is that `PermissionPolicy::evaluate` takes a
+`ToolSpec` (producible only by the registry) and a `Principal` (producible only by
+the auth layer), so there is no parameter through which model output can reach a
+decision.
+
+Everything except approval persistence is implemented and tested as of
+Milestone 2. An approval currently stops the turn and reports it; there is no
+resume path yet — see ADR-0011.
 
 ## Latency
 

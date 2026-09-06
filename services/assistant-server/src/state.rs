@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use assistant_auth::TokenVerifier;
-use assistant_core::EventBus;
+use assistant_core::{EventBus, Orchestrator};
 use sqlx::PgPool;
 
 pub type SharedState = Arc<AppState>;
@@ -14,6 +14,9 @@ pub type SharedState = Arc<AppState>;
 pub struct AppState {
     pub verifier: Arc<dyn TokenVerifier>,
     pub events: EventBus,
+    /// The execution spine. Handlers construct a `TurnRequest` and hand it over;
+    /// no orchestration logic lives in the transport layer.
+    pub orchestrator: Arc<Orchestrator>,
     /// `None` when no `DATABASE_URL` was configured.
     pub db: Option<PgPool>,
 }

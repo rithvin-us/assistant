@@ -260,3 +260,97 @@ while no release is being cut and should be reconciled before the first real tag
 
 Release infrastructure was deliberately kept out of the Assistant Core work: this
 change is a separate commit.
+
+---
+
+## ADR-0011 — Milestone 2 orchestration keeps no persistent state
+
+**Context.** The orchestrator now runs turns, evaluates permissions and stops for
+approval. Three things could plausibly need a database: conversation identity,
+approval requests, and an audit trail of tool executions.
+
+**Options.**
+1. Add `conversations`, `approvals` and `tool_executions` tables now.
+2. Keep the implemented behaviour in memory and add tables when a feature
+   actually requires them to survive a restart.
+
+**Chosen.** Option 2.
+
+**Reason.** Nothing implemented in this milestone needs to outlive the process.
+A conversation id is supplied by the client and used only to scope in-memory
+history. An approval stops the turn and reports that to the caller; there is no
+resume path yet, so a persisted `ApprovalRequest` would be a row nothing reads.
+Tool executions are traced, and the durable audit trail should be designed
+alongside the retention policy rather than accreted from whatever the first
+feature happened to need. Writing tables ahead of the code that uses them
+produces schema that is wrong in ways nobody discovers until migration time.
+
+**Consequences.** Conversation history is lost on restart, and `assistant-core`
+carries an explicit `InMemoryContextProvider` that says so in its own
+documentation. An approval cannot currently be granted and resumed -- the turn
+stops and the user must ask again. Both are Milestone 3 work, and both arrive
+with a migration at that point.
+
+The `migrations/` directory is unchanged by this milestone.
+
+---
+
+## ADR-0012 — Wire protocol v2 carries tool and approval frames
+
+**Context.** With a real tool loop, a client can now observe things the v1
+protocol had no way to express: that the assistant asked for a tool, that a tool
+finished, and -- most importantly -- that the turn stopped because something
+needs human approval.
+
+**Options.**
+1. Leave the protocol at v1 and express approval as a generic `Error` frame.
+2. Add explicit `ToolProposed`, `ApprovalRequired` and `ToolCompleted` frames and
+   bump `PROTOCOL_VERSION` to 2.
+
+**Chosen.** Option 2.
+
+**Reason.** Approval is the one place where the product deliberately stops and
+asks the user a question. Encoding that as an error would force the client to
+pattern-match on an error string to decide whether to render an approval sheet,
+which is exactly the kind of implicit contract that breaks silently. The frames
+also carry the tool's authoritative `RiskLevel`, so the UI can size the prompt to
+the actual risk instead of treating every approval identically.
+
+**Consequences.** `PROTOCOL_VERSION` is 2 in both
+`crates/assistant-protocol/src/lib.rs` and `apps/mobile/src/api/types.ts`; they
+must continue to change together. A v1 client talking to a v2 server sees the
+mismatch on `/v1/health` and reports it rather than misparsing.
+
+The wire `RiskLevel` is for display only. Every permission decision is made
+server-side against the tool registry, and a client cannot influence it -- the
+same rule as ADR-0005, restated at the transport boundary.
+
+---
+
+## ADR-0013 — Parallel tool execution only for distinct read-only calls
+
+**Context.** A model can return several tool calls at once. Running them
+concurrently is a real latency win for a voice product, and a real correctness
+hazard.
+
+**Options.**
+1. Always sequential.
+2. Always concurrent.
+3. Concurrent only when the batch is provably safe.
+
+**Chosen.** Option 3, with a deliberately narrow definition of "provably safe":
+every call in the batch is classified `Green` (read-only, no observable side
+effect) *and* no tool appears more than once. Anything else runs sequentially.
+
+**Reason.** Two writes in one batch may depend on each other, and the model's
+ordering is the only signal about that -- a signal that is untrusted and often
+wrong. Two calls to the same tool may contend on the same resource even when the
+tool is nominally read-only. `Green` is already defined as having no observable
+side effect, so a batch of distinct `Green` calls cannot interfere. Everything
+outside that is ordered.
+
+**Consequences.** Batches containing a single write are as slow as sequential
+execution, which is the intended trade. If a future tool is `Green` but
+internally stateful, that tool is misclassified and the classification is the bug
+to fix, not this rule. The behaviour is pinned by two tests -- one asserting
+read-only calls overlap, one asserting writes do not.

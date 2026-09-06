@@ -6,9 +6,18 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+# Deterministic in-process provider used by tests and by nothing else. Off by
+# default, so no release binary links it.
+mock = []
+
 [dependencies]
 assistant-tools = { workspace = true }
 async-trait.workspace = true
 futures.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

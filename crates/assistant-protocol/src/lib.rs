@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// Bumped whenever a breaking change is made to the types in this crate. The
 /// client sends the version it was built against so the server can reject a
 /// mismatched build instead of misparsing it.
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 pub type ConversationId = Uuid;
 pub type MessageId = Uuid;
@@ -79,10 +79,57 @@ pub enum ServerFrame {
         message_id: MessageId,
         text: String,
     },
+
+    /// The assistant asked to use a tool. It has not run and may never run.
+    ///
+    /// `risk` is the authoritative classification from the server's tool
+    /// registry. It is never anything the model supplied, and a client may rely
+    /// on that when deciding how prominently to show the call.
+    ToolProposed {
+        call_id: String,
+        name: String,
+        risk: RiskLevel,
+    },
+
+    /// The turn stopped and is waiting for the user to approve a tool.
+    ///
+    /// Nothing has run. The client is expected to show an approval prompt; until
+    /// a decision arrives the turn stays stopped.
+    ApprovalRequired {
+        call_id: String,
+        name: String,
+        risk: RiskLevel,
+        reason: String,
+    },
+
+    /// A tool finished. `ok` distinguishes success from a handled failure; a
+    /// failed tool does not end the turn.
+    ToolCompleted {
+        call_id: String,
+        name: String,
+        ok: bool,
+    },
+
     /// Terminates the current turn.
     TurnEnd {
         message_id: MessageId,
     },
+
     /// A recoverable error. The socket stays open.
     Error(ApiError),
+}
+
+/// Risk classification of a tool, mirrored on the wire so a client can render
+/// an approval prompt proportionately.
+///
+/// This is a copy of the server-side classification for display only. A client
+/// must never treat it as authority to run anything: every decision is made
+/// server-side against the tool registry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RiskLevel {
+    Green,
+    Yellow,
+    Orange,
+    Red,
 }

@@ -40,7 +40,16 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let events = EventBus::default();
-    let router = app(&config, pool, events.clone());
+    // A default build wires no model provider and no tools. The deterministic
+    // path still answers, and a turn that needs a model fails with a clear
+    // `no_model_provider` rather than a fabricated reply. Real providers and
+    // tools arrive with the milestones that implement them.
+    let router = app(
+        &config,
+        pool,
+        events.clone(),
+        assistant_server::orchestration::Dependencies::default(),
+    );
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;
     tracing::info!(addr = %listener.local_addr()?, "listening");

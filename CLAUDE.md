@@ -50,6 +50,17 @@ wrong.
 
 ## Architecture rules
 
+**The orchestrator is the only place orchestration happens.** Route handlers are
+transport glue: build a `TurnRequest`, forward `TurnEvent`s, write frames. A model
+call, a tool loop or a permission decision inside an Axum handler is a bug.
+
+**Never widen the permission seam.** `PermissionPolicy::evaluate` takes a
+`ToolSpec` and a `Principal` and nothing else. Do not add a parameter that model
+output can reach — that signature is the security property, not a style choice.
+
+**Never remove the tool-round bound.** `max_tool_rounds` is server configuration.
+The model must not be able to read it, raise it, or loop past it.
+
 `assistant-core` must not depend on a concrete integration or a concrete model
 provider. Integrations implement traits from `assistant-tools`; providers
 implement `ModelProvider` from `assistant-models`. The core depends on the traits.

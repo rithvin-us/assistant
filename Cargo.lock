@@ -68,9 +68,18 @@ dependencies = [
 name = "assistant-core"
 version = "0.1.0"
 dependencies = [
+ "assistant-auth",
+ "assistant-core",
+ "assistant-models",
+ "assistant-tools",
+ "async-trait",
+ "futures",
  "serde",
+ "serde_json",
+ "thiserror 2.0.20",
  "time",
  "tokio",
+ "tokio-util",
  "tracing",
  "uuid",
 ]
@@ -112,7 +121,9 @@ dependencies = [
  "async-trait",
  "futures",
  "serde",
+ "serde_json",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]
@@ -131,7 +142,9 @@ dependencies = [
  "anyhow",
  "assistant-auth",
  "assistant-core",
+ "assistant-models",
  "assistant-protocol",
+ "assistant-tools",
  "axum",
  "dotenvy",
  "futures",
@@ -143,6 +156,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-tungstenite 0.28.0",
+ "tokio-util",
  "tower",
  "tower-http 0.7.1",
  "tracing",

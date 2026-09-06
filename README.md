@@ -59,6 +59,9 @@ Full setup, Android instructions and the check commands are in
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — layers, dependency rules,
   request paths, what is deliberately absent.
+- [`docs/MILESTONE-2.md`](docs/MILESTONE-2.md) — the orchestrator: lifecycle,
+  injection, execution modes, tool loop, permission and approval boundaries,
+  streaming, cancellation, error model, testing strategy.
 - [`docs/DECISIONS.md`](docs/DECISIONS.md) — ADRs. Read ADR-0003 (providers),
   ADR-0005 (permissions) and ADR-0009 (dev auth) before extending anything.
 - [`CLAUDE.md`](CLAUDE.md) — working rules for AI assistants in this repository.

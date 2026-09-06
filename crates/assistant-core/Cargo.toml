@@ -1,17 +1,39 @@
 [package]
 name = "assistant-core"
-description = "Assistant domain seams: events and orchestration boundaries."
+description = "Assistant orchestration: the provider-agnostic, transport-agnostic execution spine."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 
+[features]
+# Deterministic test doubles, shared with the server's integration tests. Off by
+# default so none of it reaches a release binary.
+testing = []
+
 [dependencies]
+# The core depends on interfaces, never on providers or integrations.
+assistant-auth.workspace = true
+assistant-models.workspace = true
+assistant-tools.workspace = true
+
+async-trait.workspace = true
+futures.workspace = true
 serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
 time.workspace = true
-tokio = { workspace = true, features = ["sync"] }
+tokio = { workspace = true, features = ["sync", "time", "rt"] }
+tokio-util.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-tokio = { workspace = true, features = ["macros", "rt"] }
+# The integration tests drive the real orchestrator with the deterministic mock
+# provider and this crate's own test doubles.
+assistant-core = { path = ".", features = ["testing"] }
+assistant-models = { workspace = true, features = ["mock"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "time"] }
+tokio-util.workspace = true
+uuid.workspace = true
+serde_json.workspace = true
