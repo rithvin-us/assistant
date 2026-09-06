@@ -227,6 +227,7 @@ export default function GmailScreen({ onBack }: GmailScreenProps) {
     if (!selectedAccountId) return;
     let cancelled = false;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void handleSearch(false);
 
     const interval = setInterval(() => {

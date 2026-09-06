@@ -65,6 +65,7 @@ export default function ConnectionsScreen({ onBack }: ConnectionsScreenProps) {
   useEffect(() => {
     let cancelled = false;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadAccounts(false);
 
     const interval = setInterval(() => {

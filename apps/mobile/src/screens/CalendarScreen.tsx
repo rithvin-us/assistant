@@ -211,6 +211,7 @@ export default function CalendarScreen({ onBack }: CalendarScreenProps) {
   useEffect(() => {
     let cancelled = false;
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void loadEvents(false);
 
     const interval = setInterval(() => {
@@ -236,51 +237,28 @@ export default function CalendarScreen({ onBack }: CalendarScreenProps) {
   // Find Free Slots
 
   const handleFindFreeSlots = useCallback(async () => {
-
     if (!selectedAccountId) return;
-
     try {
-
       setLoadingSlots(true);
-
       const now = new Date();
-
       const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 9, 0, 0).toISOString();
-
       const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 21, 0, 0).toISOString();
-
       const slots = await fetchFreeSlots(selectedAccountId, startOfDay, endOfDay, freeDuration);
-
       setFreeSlots(slots);
-
     } catch (err: unknown) {
-
       const msg = err instanceof Error ? err.message : "Failed to calculate free time";
-
       setErrorMessage(msg);
-
     } finally {
-
       setLoadingSlots(false);
-
     }
-
   }, [selectedAccountId, freeDuration]);
 
-
-
   useEffect(() => {
-
     if (viewTab === "freetime") {
-
       // eslint-disable-next-line react-hooks/set-state-in-effect
       handleFindFreeSlots();
-
     }
-
   }, [viewTab, handleFindFreeSlots]);
-
-
 
   const handleCreateEvent = async () => {
     if (!selectedAccountId || !newTitle.trim()) return;
@@ -292,7 +270,7 @@ export default function CalendarScreen({ onBack }: CalendarScreenProps) {
       // Parse Date & Start/End time cleanly
       const [year, month, day] = newDate.split("-").map(Number);
       const [startHour, startMin] = (newStartTime || "10:00").split(":").map(Number);
-      let [endHour, endMin] = (newEndTime || "11:00").split(":").map(Number);
+      const [endHour, endMin] = (newEndTime || "11:00").split(":").map(Number);
 
       const startDate = new Date(year, month - 1, day, startHour, startMin, 0);
       let endDate = new Date(year, month - 1, day, endHour, endMin, 0);
