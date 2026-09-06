@@ -1,0 +1,24 @@
+# Rust
+/target
+**/target
+
+# Node
+node_modules/
+apps/mobile/dist/
+
+# Tauri
+apps/mobile/src-tauri/gen/
+apps/mobile/src-tauri/target/
+
+# Secrets and local state. Only *.example files are ever committed.
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/

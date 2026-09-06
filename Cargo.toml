@@ -1,0 +1,62 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/assistant-protocol",
+    "crates/assistant-core",
+    "crates/assistant-models",
+    "crates/assistant-tools",
+    "crates/assistant-auth",
+    "crates/assistant-memory",
+    "services/assistant-server",
+    "apps/mobile/src-tauri",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.90"
+license = "MIT"
+repository = "https://github.com/rithvin/personal-assistant"
+
+[workspace.dependencies]
+# Internal crates.
+assistant-protocol = { path = "crates/assistant-protocol" }
+assistant-core = { path = "crates/assistant-core" }
+assistant-models = { path = "crates/assistant-models" }
+assistant-tools = { path = "crates/assistant-tools" }
+assistant-auth = { path = "crates/assistant-auth" }
+assistant-memory = { path = "crates/assistant-memory" }
+
+# Async runtime and HTTP.
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.7", features = ["trace", "cors", "limit"] }
+
+# Serialization and domain primitives.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["serde-well-known", "macros"] }
+
+# Persistence.
+sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls", "macros", "migrate"] }
+
+# Observability and errors.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+thiserror = "2"
+anyhow = "1"
+
+# Misc.
+async-trait = "0.1"
+futures = "0.3"
+
+# Profiles must live at the workspace root; `apps/mobile/src-tauri` is a member,
+# so its release tuning is declared here. See docs/DECISIONS.md ADR-0002.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true

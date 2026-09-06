@@ -1,0 +1,13 @@
+[package]
+name = "assistant-models"
+description = "Provider-agnostic model abstraction. Contains no provider implementations."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+futures.workspace = true
+serde.workspace = true
+thiserror.workspace = true

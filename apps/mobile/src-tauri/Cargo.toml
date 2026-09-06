@@ -1,0 +1,37 @@
+[package]
+name = "assistant-mobile"
+description = "Tauri shell: device capabilities, local SQLite cache, and the bridge to assistant-server."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lib]
+# The `_lib` suffix keeps the library name distinct from the binary name, which
+# would otherwise collide on Windows. See rust-lang/cargo#8519.
+name = "assistant_mobile_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+assistant-protocol.workspace = true
+
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+# The shell talks to the server itself rather than letting the webview do it:
+# it keeps the request path identical on desktop and Android, and avoids CORS
+# and cleartext-HTTP policy differences between the two webviews.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }
+
+# Local offline cache. Deliberately not a mirror of the cloud schema.
+sqlx = { workspace = true, features = ["sqlite"] }

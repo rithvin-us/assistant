@@ -1,0 +1,214 @@
+# Architecture Decision Records
+
+Every decision that touches security, database design, authentication, model
+providers, mobile architecture, cloud cost, permissions or data retention is
+recorded here before it is implemented. Records are append-only; a reversal is a
+new record that supersedes an old one.
+
+---
+
+## ADR-0001 — Modular monolith in one Cargo workspace
+
+**Context.** The system will eventually span assistant orchestration, model
+providers, tools, permissions, memory, scheduling, notifications, documents,
+integrations and audit. That is a lot of surface for one person to operate.
+
+**Options.**
+1. Microservices, one per bounded context.
+2. A single crate with modules.
+3. A modular monolith: one deployable binary, many crates with an enforced
+   dependency direction.
+
+**Chosen.** Option 3.
+
+**Reason.** Boundaries are what matter, and Cargo enforces them for free: a crate
+cannot use what it does not depend on. Microservices would add network hops,
+deployment surface and cost for a single-user product. One flat crate would let
+`assistant-core` reach into a Gmail client six months from now with nothing to
+stop it.
+
+**Consequences.** One process to deploy, one place to read a stack trace.
+Splitting a crate out into its own service later is mechanical, because the
+dependency graph is already acyclic. Cross-crate refactors cost more than moving
+code between modules would.
+
+---
+
+## ADR-0002 — `apps/mobile/src-tauri` is a workspace member
+
+**Context.** The Tauri shell is Rust and wants to share `assistant-protocol` with
+the server. It could equally be its own separate workspace.
+
+**Options.**
+1. Exclude it; separate lockfile and `target/`.
+2. Include it as a workspace member.
+
+**Chosen.** Option 2.
+
+**Reason.** One lockfile means the shell and the server cannot drift onto
+different versions of a shared dependency, and `cargo clippy --workspace` covers
+the shell. Cargo only honours `[profile.*]` at the workspace root, so the release
+tuning Tauri generates was moved into the root `Cargo.toml`.
+
+**Consequences.** `cargo build --workspace` compiles the Tauri shell too, so CI
+on Linux needs the system webview development packages. If Android
+cross-compilation ever conflicts with the shared `target/`, splitting the shell
+back out is the fallback.
+
+---
+
+## ADR-0003 — The core depends on model interfaces, never on providers
+
+**Context.** Claude, Gemini and later local models each have different strengths.
+Any of them could be replaced, repriced or deprecated.
+
+**Options.**
+1. Call a provider SDK directly from orchestration code.
+2. Define a `ModelProvider` trait; implement it per provider behind features.
+
+**Chosen.** Option 2. `assistant-models` contains the trait and no provider.
+
+**Reason.** Provider choice is a routing decision that should follow the
+workload — a cheap model for classification, a strong model for planning, a
+realtime model for voice. Hard-coding a vendor at call sites makes that
+impossible to change without touching every call site, and turns cost control
+into a rewrite.
+
+**Consequences.** A provider-specific feature must either be expressible as a
+`Capability` or be unavailable. That is the intended trade: a feature no
+abstraction can express is a feature that locks the product to one vendor.
+
+---
+
+## ADR-0004 — In-process event bus, not a broker
+
+**Context.** The system is event-driven (`EmailReceived`, `DeadlineDetected`,
+`ApprovalRequested`, …).
+
+**Options.**
+1. A message broker (Redis, NATS, Kafka).
+2. A Tokio broadcast channel in-process.
+3. A Postgres table polled as a queue.
+
+**Chosen.** Option 2 now, with option 3 as the durability layer once durability
+is actually required.
+
+**Reason.** Every producer and consumer currently lives in one process. A broker
+would add infrastructure, cost and an operational failure mode to solve a problem
+that does not exist yet.
+
+**Consequences.** Events are lost on restart, so nothing that must survive a
+restart may rely on the bus alone. When durable events are needed, a subscriber
+writes them to Postgres and the bus interface does not change.
+
+---
+
+## ADR-0005 — Risk level is a static property of a tool declaration
+
+**Context.** Tools will range from reading a calendar to sending mail from the
+user's account. Something has to decide what needs approval.
+
+**Options.**
+1. The model states how risky its own call is.
+2. Risk is fixed in the tool's declaration; policy code maps it to a decision.
+
+**Chosen.** Option 2. `RiskLevel` lives in `ToolSpec` and is set in Rust.
+
+**Reason.** Model output is untrusted input. A model that could label its own call
+`Green` could be argued into sending email without approval — whether by a prompt
+injection in a document it read, or by ordinary error. Deterministic policy over a
+fixed declaration cannot be talked out of anything.
+
+**Consequences.** Adding a tool means making an explicit risk judgement in code
+and in review. Risk cannot vary with arguments; a tool whose danger depends on its
+input must be split into separate tools at separate levels.
+
+---
+
+## ADR-0006 — Plain SQL migrations, applied explicitly
+
+**Context.** Postgres via Supabase is the source of truth. Schema has to evolve.
+
+**Options.**
+1. `supabase/migrations` and the Supabase CLI.
+2. Plain `.sql` files under `migrations/`, applied with `sqlx migrate`.
+3. Both.
+
+**Chosen.** Option 2.
+
+**Reason.** Plain SQL applied by sqlx-cli works against Supabase and against any
+other Postgres, which keeps a later move off Supabase a hosting change rather than
+a rewrite. It also avoids making Docker and the Supabase CLI hard prerequisites
+for building the project.
+
+**Consequences.** Supabase-specific features (row-level security policies, edge
+functions) must be written as SQL in the same migration files rather than managed
+by Supabase tooling. Migrations are never applied automatically at startup: a
+process that alters schema on boot can corrupt data during a rolling restart, so
+`scripts/migrate.ps1` is a deliberate, separate act.
+
+---
+
+## ADR-0007 — Local SQLite is a cache, not a replica
+
+**Context.** The app must stay useful offline: quick capture, today's tasks, local
+reminders.
+
+**Options.**
+1. Mirror the cloud schema locally and sync bidirectionally.
+2. Keep a small local store holding only pending captures and cached reads.
+
+**Chosen.** Option 2.
+
+**Reason.** Bidirectional sync of a full schema means conflict resolution, which is
+a large and subtle body of work that would dominate the project and produce
+user-visible data anomalies whenever it is wrong. Almost all real offline value
+comes from queuing writes and caching a handful of reads.
+
+**Consequences.** Offline reads are limited to what was cached. The local database
+is disposable — the recovery for a corrupt or outdated local schema is to delete
+the file and re-sync, which is why it is created inline rather than migrated.
+
+---
+
+## ADR-0008 — Network calls go through the Tauri shell, not the webview
+
+**Context.** The frontend needs to reach the server from desktop and from Android.
+
+**Options.**
+1. `fetch` from the webview.
+2. Rust `#[tauri::command]` functions that the webview invokes.
+
+**Chosen.** Option 2.
+
+**Reason.** One request path on both platforms, no CORS configuration, no Android
+cleartext-HTTP exemption, and — most importantly — credentials and retry/timeout
+policy live in Rust rather than in JavaScript shipped to the device. It also keeps
+business logic out of React, which is the stated goal for the mobile layer.
+
+**Consequences.** Every new server call needs a Rust command as well as a
+TypeScript wrapper. Streaming will need Tauri events rather than a returned value:
+the conversation WebSocket terminates in Rust and forwards frames to the webview.
+
+---
+
+## ADR-0009 — Development authentication is a static bearer token
+
+**Context.** Milestone 0 needs an auth boundary to exist without building real
+authentication.
+
+**Options.**
+1. No authentication at all.
+2. A shared static bearer token behind a `TokenVerifier` trait.
+3. Supabase JWT verification now.
+
+**Chosen.** Option 2.
+
+**Reason.** The extraction point has to be real code, or every handler written
+before real auth arrives will need changing afterwards. A static token buys that
+for a few lines. Real authentication is a later milestone with its own design.
+
+**Consequences.** `DevTokenVerifier` has no expiry, no revocation and no per-user
+identity. It is not a security control, and a build using it must not be exposed
+beyond a trusted local network. Replacing it means implementing `TokenVerifier`
+once; no handler changes.

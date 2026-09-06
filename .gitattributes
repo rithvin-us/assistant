@@ -1,0 +1,11 @@
+# Normalise to LF in the repository; Git checks out platform-native endings.
+* text=auto eol=lf
+
+# Windows-only scripts stay CRLF on disk.
+*.ps1 text eol=crlf
+
+# Binary assets.
+*.png binary
+*.ico binary
+*.icns binary
+*.svg text eol=lf
