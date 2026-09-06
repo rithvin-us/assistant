@@ -18,6 +18,9 @@ import ChecklistRoundedIcon from "@mui/icons-material/ChecklistRounded";
 import EventRoundedIcon from "@mui/icons-material/EventRounded";
 import MailOutlineRoundedIcon from "@mui/icons-material/MailOutlineRounded";
 import GoogleIcon from "@mui/icons-material/Google";
+import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
+import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
+import AutoStoriesOutlinedIcon from "@mui/icons-material/AutoStoriesOutlined";
 
 import type { ConnectionState } from "../api/bridge";
 import type { ScreenType } from "../App";
@@ -34,6 +37,27 @@ export default function MoreSheet({
   onSelectScreen: (screen: ScreenType) => void;
 }) {
   const FEATURES = [
+    {
+      icon: <AutoStoriesOutlinedIcon sx={{ color: "#7C3AED" }} />,
+      label: "Academic",
+      note: "Deadlines, coursework & announcements",
+      enabled: true,
+      screen: "academic" as ScreenType,
+    },
+    {
+      icon: <SchoolOutlinedIcon sx={{ color: "#0F9D58" }} />,
+      label: "Classroom",
+      note: "Courses, coursework & announcements",
+      enabled: true,
+      screen: "classroom" as ScreenType,
+    },
+    {
+      icon: <FolderOutlinedIcon sx={{ color: "#F4B400" }} />,
+      label: "Drive",
+      note: "Search files & open documents",
+      enabled: true,
+      screen: "drive" as ScreenType,
+    },
     {
       icon: <ChecklistRoundedIcon sx={{ color: "#DC4C3E" }} />,
       label: "Tasks",

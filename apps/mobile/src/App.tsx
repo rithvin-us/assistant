@@ -18,6 +18,9 @@ import IdeasScreen from "./screens/IdeasScreen";
 import ConnectionsScreen from "./screens/ConnectionsScreen";
 import CalendarScreen from "./screens/CalendarScreen";
 import GmailScreen from "./screens/GmailScreen";
+import ClassroomScreen from "./screens/ClassroomScreen";
+import DriveScreen from "./screens/DriveScreen";
+import AcademicScreen from "./screens/AcademicScreen";
 import ConversationSheet from "./components/ConversationSheet";
 
 export type ScreenType =
@@ -28,7 +31,10 @@ export type ScreenType =
   | "ideas"
   | "connections"
   | "calendar"
-  | "gmail";
+  | "gmail"
+  | "classroom"
+  | "drive"
+  | "academic";
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
@@ -67,6 +73,24 @@ export default function App() {
       )}
       {currentScreen === "gmail" && (
         <GmailScreen onBack={() => setCurrentScreen("home")} />
+      )}
+      {currentScreen === "classroom" && (
+        <ClassroomScreen
+          onBack={() => setCurrentScreen("home")}
+          onOpenConnections={() => setCurrentScreen("connections")}
+        />
+      )}
+      {currentScreen === "drive" && (
+        <DriveScreen
+          onBack={() => setCurrentScreen("home")}
+          onOpenConnections={() => setCurrentScreen("connections")}
+        />
+      )}
+      {currentScreen === "academic" && (
+        <AcademicScreen
+          onBack={() => setCurrentScreen("home")}
+          onOpenClassroom={() => setCurrentScreen("classroom")}
+        />
       )}
 
       {currentScreen === "home" && (
