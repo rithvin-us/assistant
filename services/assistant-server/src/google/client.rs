@@ -25,6 +25,49 @@ const CALENDAR_EVENTS_SCOPE: &str = "https://www.googleapis.com/auth/calendar.ev
 const USERINFO_EMAIL_SCOPE: &str = "https://www.googleapis.com/auth/userinfo.email";
 const USERINFO_PROFILE_SCOPE: &str = "https://www.googleapis.com/auth/userinfo.profile";
 
+// Milestone 6. Every one is `.readonly`, and every Classroom scope is the
+// `.me` variant: this application reads the signed-in student's own academic
+// information and has no teacher or administrator capability. See ADR-0032.
+const CLASSROOM_COURSES_SCOPE: &str = "https://www.googleapis.com/auth/classroom.courses.readonly";
+const CLASSROOM_COURSEWORK_SCOPE: &str =
+    "https://www.googleapis.com/auth/classroom.coursework.me.readonly";
+const CLASSROOM_ANNOUNCEMENTS_SCOPE: &str =
+    "https://www.googleapis.com/auth/classroom.announcements.readonly";
+// `drive.readonly` is a Google *restricted* scope: a published application
+// using it must pass OAuth verification and a security assessment. It is
+// requested anyway because the alternative, `drive.file`, only ever grants
+// access to files the user has individually picked, which cannot answer
+// "search my Drive" at all. See ADR-0033.
+const DRIVE_READONLY_SCOPE: &str = "https://www.googleapis.com/auth/drive.readonly";
+
+/// Every scope this application asks for, in one place.
+///
+/// Consent is all-or-nothing per connection rather than incremental: an
+/// account connected before Milestone 6 holds only the Gmail and Calendar
+/// scopes, and Classroom or Drive calls on it will fail with a 403 until the
+/// user reconnects it. `AccountSummary::scopes` carries what was actually
+/// granted so the UI can say which account needs reconnecting instead of
+/// letting the feature fail silently.
+pub const REQUESTED_SCOPES: &[&str] = &[
+    USERINFO_EMAIL_SCOPE,
+    USERINFO_PROFILE_SCOPE,
+    GMAIL_READONLY_SCOPE,
+    CALENDAR_EVENTS_SCOPE,
+    CLASSROOM_COURSES_SCOPE,
+    CLASSROOM_COURSEWORK_SCOPE,
+    CLASSROOM_ANNOUNCEMENTS_SCOPE,
+    DRIVE_READONLY_SCOPE,
+];
+
+/// Scopes a feature needs, for telling the user which account to reconnect.
+pub const CLASSROOM_SCOPES: &[&str] = &[
+    CLASSROOM_COURSES_SCOPE,
+    CLASSROOM_COURSEWORK_SCOPE,
+    CLASSROOM_ANNOUNCEMENTS_SCOPE,
+];
+
+pub const DRIVE_SCOPES: &[&str] = &[DRIVE_READONLY_SCOPE];
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct StoredGoogleTokens {
     pub access_token: String,
@@ -84,13 +127,7 @@ impl GoogleClient {
             .map_err(|e| ToolError::Failed(e.to_string()))?;
         let state_param = encode_hex(&encrypted_state);
 
-        let scopes = [
-            GMAIL_READONLY_SCOPE,
-            CALENDAR_EVENTS_SCOPE,
-            USERINFO_EMAIL_SCOPE,
-            USERINFO_PROFILE_SCOPE,
-        ]
-        .join(" ");
+        let scopes = REQUESTED_SCOPES.join(" ");
 
         let encoded_scopes = url_encode(&scopes);
         let encoded_redirect = url_encode(redirect_uri);
@@ -1042,7 +1079,7 @@ fn map_google_event(account_id: Uuid, item: GoogleEventItem) -> CalendarEvent {
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn url_encode(input: &str) -> String {
+pub(crate) fn url_encode(input: &str) -> String {
     let mut out = String::new();
     for b in input.bytes() {
         match b {
