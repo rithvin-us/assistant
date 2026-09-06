@@ -15,12 +15,16 @@ A voice-first personal assistant. Rust backend, Tauri 2 + React mobile app, Post
 - **Google Calendar Management:** Read, search, create, and update calendar events. Destructive deletions are statically classified as Orange risk and require explicit human approval via durable actions.
 - **Deterministic Free-Time Calculation:** Pure mathematical interval arithmetic computes open calendar slots for task scheduling without requiring an LLM.
 - **Task to Calendar Foundation:** Tasks support estimated duration and due dates to bridge directly into personal schedule planning.
-- **Pure Light Theme Mobile Screens:** Dedicated Connections, Gmail, and Calendar screens alongside Tasks, Notes, and the conversational assistant.
+- **Google Classroom (read-only):** List courses, coursework and announcements for any connected account. Due dates are normalised from Classroom's split date/time; an assignment with no deadline is shown as having none rather than being given a guessed one.
+- **Google Drive (read-only):** Search by name and MIME type, browse folders, read metadata, and open small text files. Oversized, binary and PDF files are refused with a reason instead of being partially read. Nothing from Drive is mirrored into Postgres.
+- **Coursework to Tasks:** Assignments import into the normal task list with their origin recorded. Repeated syncs update rather than duplicate, a moved deadline moves the same task, and a title you edited is never overwritten.
+- **Academic Overview:** Counts of what is due this week and what is overdue, the nearest deadlines across every source, and recent announcements — all counted from rows, with no model involved.
+- **Pure Light Theme Mobile Screens:** Dedicated Connections, Gmail, Calendar, Classroom, Drive and Academic screens alongside Tasks, Notes, and the conversational assistant.
 - **A real Anthropic model provider** behind the vendor-neutral `ModelProvider` trait.
 - **Conversations persist in PostgreSQL** scoped strictly to the authenticated user.
 - **Durable approvals, executions, and audit trail** (M3), preserving authoritative security.
 
-**Not built yet:** Google Classroom, Google Drive, WhatsApp, long-term memory embeddings, automatic email importance classification, and local wake-word voice. See [`docs/MILESTONE-5.md`](docs/MILESTONE-5.md) for full details.
+**Not built yet:** WhatsApp, PDF text extraction and OCR, long-term memory embeddings, semantic deduplication across sources, automatic email importance classification, and local wake-word voice. See [`docs/MILESTONE-6.md`](docs/MILESTONE-6.md) for the current milestone, including the Google scope limitations that affect school accounts.
 
 ## Layout
 

@@ -1200,3 +1200,172 @@ the preconfigured config is the type `reqwest` expects.
 enum *variants* and not their fields. The shell sent `latency_ms` to a UI
 reading `latencyMs`, so the sheet rendered "undefined ms"; the enum now also
 sets `rename_all_fields`.
+
+## ADR-0032 — Classroom is read-only, student-scope, and consent is not incremental
+
+**Decision.** Milestone 6 requests four new Google scopes — three Classroom
+`.readonly` scopes in their `.me` form, and `drive.readonly` — as one consent
+screen, and implements no Classroom write operation of any kind.
+
+**Context.** The assistant needs to understand a student's academic
+obligations. Google Classroom exposes that through `courses.list`,
+`courses.courseWork.list` and `courses.announcements.list`. Each has a
+`.readonly` scope, and the coursework scopes come in two forms: `.me`, which
+reads the signed-in student's own work, and `.students`, which reads the work
+of students in courses the caller teaches or administers.
+
+The existing OAuth flow requests every scope at once with `prompt=consent`, and
+stores what Google actually granted in `connected_accounts.scopes`.
+
+**Options.**
+1. Request the `.students` scopes as well, to support teachers later.
+2. Request only the `.me` read scopes.
+3. Add Classroom write scopes now, for submitting assignments.
+
+**Chosen approach: option 2.**
+
+**Reason.** Option 1 asks a student to grant the ability to read other
+students' grades in order to see their own timetable, which is a worse consent
+prompt for a capability nothing uses. Option 3 is out of scope and carries a
+consequence this application should not be able to cause: submitting an
+assignment is not undoable by the person who did it. The scopes granted are the
+ceiling on what a bug can do, so the ceiling is set at reading.
+
+**Consequences.** Teacher and administrator capabilities are unavailable, and a
+course where the user is the teacher rather than a student will not appear:
+`courses.list` is called with `studentId=me`. That is a real limitation and is
+documented in `docs/MILESTONE-6.md` rather than worked around.
+
+Consent is not incremental. An account connected before this milestone holds
+only the Gmail and Calendar scopes, and every Classroom or Drive call against it
+returns 403 until the user reconnects it. Rather than let that surface as an
+unexplained error, `AccountSummary::scopes` is compared against what each
+feature needs and the UI offers "Reconnect" on the specific account. Re-running
+consent does not create a second account: the upsert key is
+`(user_id, provider, provider_account_id)`.
+
+Google's error bodies quote the request back, which for these APIs can include a
+course name, a file name or a search query. `api_error` maps the HTTP status to
+a sentence and drops the body, keeping the four cases a user can act on —
+reconnect, ask an administrator, wait, retry — distinguishable without
+forwarding Google's text into a phone screen or a log.
+
+A Workspace for Education domain can block unverified third-party applications
+from Classroom data entirely, in which case a school account returns 403
+regardless of the scopes granted. The 403 message says so.
+
+## ADR-0033 — Drive is read-only, is never mirrored, and refuses before it downloads
+
+**Decision.** Drive access uses `drive.readonly`; no Drive data is stored in
+Postgres; and a file is checked for type and size before any content request is
+made, with a ceiling of 512 KiB.
+
+**Context.** The milestone needs to find a file by name across My Drive and open
+small text documents. Google offers two relevant scopes. `drive.file` is
+non-sensitive but grants access only to files the user has individually picked
+through Google's own file picker, so it cannot answer "search my Drive" at all.
+`drive.readonly` can, and is a Google *restricted* scope: a published
+application using it must pass OAuth verification and, if it stores user data on
+a server, a third-party security assessment.
+
+**Options.**
+1. Use `drive.file` and drop search.
+2. Use `drive.readonly`.
+3. Use `drive.metadata.readonly` for search and never read contents.
+
+**Chosen approach: option 2.**
+
+**Reason.** Option 1 does not implement the requirement; a picker-scoped
+integration cannot find a file the user has not already pointed at. Option 3 is
+also restricted, so it pays the same verification cost while removing the
+ability to open a document. Option 2 is the only one that does the job, and the
+verification cost is a distribution problem rather than a technical one.
+
+**Consequences.** Until verification is completed the application must stay in
+Google's testing mode, where restricted scopes work for a limited number of
+explicitly listed test users and every other user sees an unverified-app
+warning. This is a real constraint on distribution and is recorded in
+`docs/MILESTONE-6.md`.
+
+Nothing from Drive is written to Postgres. A user's Drive is not this
+application's data to keep, and mirroring it would turn a read-only integration
+into a second copy of their files with its own breach surface. Metadata is
+fetched on demand and cached on the device, which is enough for the offline
+requirement.
+
+`read_small_file` fetches metadata first and refuses on type before size, so a
+900 MB video is rejected without a byte being requested. A file that reports no
+size and is not an exportable Google document is refused rather than streamed
+blindly, because an unknown length is exactly the case a limit exists for.
+Refusals name the file and say why. Above `MAX_INLINE_CHARS` the response is cut
+and `truncated` is set, so the UI can say it is showing only the beginning
+rather than presenting a partial file as whole.
+
+PDFs are searchable and their metadata is returned, but they are not read as
+text. Extracting a PDF needs OCR and page-level handling that belongs to the
+later document-intelligence milestone; answering from a partial extraction would
+be exactly the confident wrong answer this project's rules forbid.
+
+## ADR-0034 — Imported coursework is a task with provenance, synced on demand
+
+**Decision.** Classroom coursework becomes a row in `tasks` carrying its origin.
+Identity is `(user_id, external_provider, external_id)` and is enforced by a
+unique index. Sync is triggered explicitly, never on a timer, and decides field
+by field whether the provider or the user owns a value.
+
+**Context.** An assignment is an obligation the user has, and the application
+already has a table for those. Copying coursework into a parallel "academic
+items" table would mean the Tasks screen, the free-time engine and the scheduler
+each had to learn about a second kind of deadline, and a student would see the
+same assignment twice.
+
+But an imported task is not entirely the user's: Classroom owns the title and
+the due date, and moves them. The user owns their notes, their priority, and any
+rename they make. A sync has to serve both.
+
+**Options.**
+1. A separate academic-items table, joined at read time.
+2. A task row per assignment, overwriting from Classroom on every sync.
+3. A task row per assignment, with the provider's last-known values recorded
+   alongside the current ones.
+
+**Chosen approach: option 3.**
+
+**Reason.** Option 1 duplicates the concept of a deadline and pushes the
+duplication into every consumer. Option 2 is simple until the first time a user
+renames an assignment to something meaningful to them and a background refresh
+silently discards it. Option 3 makes the question answerable: `source_title` and
+`source_due_at` record what Classroom last sent, so a field that still matches
+is provider-owned and a field that differs has been edited by the user. Without
+those columns the only available policies are "always overwrite the user" and
+"never update the deadline", and a wrong deadline is not acceptable for a value
+the scheduler acts on.
+
+Title and due date are decided independently, so renaming an assignment does not
+freeze its deadline.
+
+**Consequences.** Running a sync twice cannot create a second task: the unique
+index is partial, on `external_id is not null`, so manually created tasks are
+unaffected. A row created before this milestone has no `source_title` and is
+treated as user-owned, which is the safe direction — the alternative would let
+the first sync overwrite a title someone had been maintaining by hand.
+
+Coursework that disappears from Classroom leaves its task alone. There is no
+delete path in sync at all. The task belongs to the user, and a teacher tidying
+a course is not consent to destroy the user's copy of the work.
+
+`external_account_id` is `on delete set null`. Disconnecting a Google account
+stops future requests, but no task, note or reminder is removed; the imported
+rows keep their `source` so the UI can still say where they came from.
+
+Sync is explicit. Polling Classroom on a schedule would spend a shared quota
+re-reading data that changes a few times a term, so the refresh is a button.
+`academic_sync_state` records when each resource last synced and what failed,
+which is what lets the UI show the cache's age rather than implying a live read.
+No Redis, no queue, no scheduler.
+
+Deduplication across sources is deliberately limited to exact identity —
+provider plus external id. A Gmail message mentioning the same assignment is not
+matched to it. Doing that well needs semantic comparison, which belongs to a
+later milestone; guessing at it here would silently merge two obligations that
+happened to share a word.

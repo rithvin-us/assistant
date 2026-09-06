@@ -77,6 +77,30 @@ back to a deterministic development key with a warning if not set.
 > the shipped Android bundle, so a provider key there ships to every device. The
 > phone talks to this server; this server talks to the provider. See ADR-0020.
 
+#### Google Cloud console setup for Milestone 6
+
+Classroom and Drive need four extra scopes, which means work in the Google
+Cloud console as well as in `.env`:
+
+1. Enable **Google Classroom API** and **Google Drive API** for the project.
+2. Add these scopes to the OAuth consent screen:
+   `classroom.courses.readonly`, `classroom.coursework.me.readonly`,
+   `classroom.announcements.readonly`, `drive.readonly`.
+3. `drive.readonly` is a **restricted** scope. Until the project passes OAuth
+   verification and a security assessment, keep the consent screen in
+   **Testing** mode and add each Google account you sign in with as a **test
+   user**; otherwise Google refuses the scope.
+4. **Reconnect every existing account** afterwards. Consent is not
+   incremental, so an account connected before this change holds only the
+   Gmail and Calendar scopes and every Classroom or Drive call against it
+   returns 403. The Classroom and Drive screens detect this and offer
+   "Reconnect"; reconnecting updates the existing row rather than adding a
+   second account.
+
+A Workspace for Education account may still be refused if its administrator
+blocks unverified third-party apps. That is a domain policy, not a bug, and
+the error message says so. See ADR-0032 and ADR-0033.
+
 ### 2. Mobile Client Environment (`apps/mobile/.env`)
 
 Copy `apps/mobile/.env.example` to `apps/mobile/.env`:

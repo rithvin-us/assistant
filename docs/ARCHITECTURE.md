@@ -213,3 +213,30 @@ Nothing promotes it to a durable fact about the user, scores importance, embeds
 or retrieves semantically. That is a separate system with its own retention and
 correction rules, and conflating the two is the mistake `assistant-memory`
 exists as a separate crate to prevent.
+
+## Academic Intelligence (Milestone 6)
+
+Classroom and Drive follow the shape Gmail and Calendar established:
+`ClassroomProvider`, `DriveProvider` and `AcademicProvider` are traits in
+`assistant-tools`; the HTTP clients are `google/classroom.rs` and
+`google/drive.rs`, the only files in the server that know Google's JSON.
+`assistant-core` still links no Google type.
+
+`academic.rs` is the single implementation of the academic capabilities. The
+mobile screens reach it through `routes/academic.rs`, and the `classroom.*`,
+`drive.*` and `academic.*` tools reach the same functions through the traits,
+so the manual path and the model path cannot diverge. Nothing in it calls a
+model: counting overdue assignments and importing coursework are arithmetic and
+an upsert.
+
+Coursework is imported into `tasks` rather than a parallel table, keyed by
+`(user_id, external_provider, external_id)`. `source_title` and `source_due_at`
+record what the provider last sent, which is what lets a sync distinguish a
+provider change from a user edit. See ADR-0034.
+
+Drive is read-only and is never mirrored into Postgres; file metadata is cached
+on the device. Content reads check type and size before downloading. See
+ADR-0033.
+
+Full detail: `docs/MILESTONE-6.md`.
+

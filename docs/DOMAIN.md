@@ -31,6 +31,12 @@ This document defines the core domain concepts required for the voice-first pers
 | **`Automation`** | `assistant-core` | Programmed background rule or recurring workflow. |
 | **`Source`** | `assistant-core` / `assistant-tools` | Data origin (Gmail, Calendar, Drive, Web, Manual capture, Desktop agent). |
 | **`AuditEvent`** | `assistant-core` / `assistant-auth` | Immutable security log entry for sensitive identity or tool operations. |
+| **`Course`** | `assistant-protocol` / `assistant-tools` | Provider-neutral enrolment: name, section, room, state, bound to one account. |
+| **`CourseworkItem`** | `assistant-protocol` / `assistant-tools` | Assignment with an optional deadline. `due_at = NULL` means no deadline, never "unknown". |
+| **`Announcement`** | `assistant-protocol` / `assistant-tools` | Course announcement, cached rather than archived. |
+| **`DriveFile`** | `assistant-protocol` / `assistant-tools` | File metadata only. Never mirrored into Postgres. |
+| **`AcademicDeadline`** | `assistant-protocol` / `assistant-core` | One obligation, normalised across Classroom, Calendar, Gmail and manual entry. |
+| **`AcademicSource`** | `assistant-protocol` | Provenance of an imported item: `manual`, `google_classroom`, `gmail`, `calendar`, `drive`. |
 
 ---
 
