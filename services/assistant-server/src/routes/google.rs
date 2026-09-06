@@ -131,6 +131,19 @@ pub async fn oauth_callback(
             .into_response();
     }
 
+    if query.code.is_none() && query.state.is_none() {
+        return (
+            StatusCode::OK,
+            Html(
+                "<!DOCTYPE html><html><body style='font-family:sans-serif;text-align:center;padding:50px;'>\
+                <h2 style='color:#1a73e8;'>Assistant Server</h2>\
+                <p style='color:#555;'>Server is running.</p>\
+                </body></html>",
+            ),
+        )
+            .into_response();
+    }
+
     let (Some(code), Some(state_param)) = (query.code, query.state) else {
         return (
             StatusCode::BAD_REQUEST,
