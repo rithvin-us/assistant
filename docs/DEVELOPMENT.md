@@ -2,129 +2,153 @@
 
 ## Prerequisites
 
-| Tool | Version used | Notes |
+| Tool | Version verified | Notes |
 |---|---|---|
-| Rust | 1.96.0 (stable, MSVC) | Install via **rustup**, not the standalone MSI — Android targets need `rustup target add`. |
-| Node.js | 24.15.0 | |
-| pnpm | 9.15.9 | `npm i -g pnpm` |
-| Visual Studio Build Tools | 2022 or 2026, C++ workload | Required for the MSVC linker. |
-| WebView2 Runtime | any recent | Preinstalled on Windows 11. |
+| Rust | 1.98.1 (stable, MSVC) | Managed via **rustup** (`C:\Users\rithv\.cargo\bin\rustup.exe`). Pinned via `rust-toolchain.toml`. |
+| Node.js | 24.15.0 | Modern ESM support. |
+| pnpm | 9.15.9 | Workspace package manager (`npm i -g pnpm`). |
+| Visual Studio Build Tools | 2026 (Professional), C++ workload | Required for the MSVC linker. |
+| WebView2 Runtime | 152.0.4191.62 | Preinstalled on Windows 11. |
 
 For **Android** builds, additionally:
 
-| Tool | Notes |
-|---|---|
-| JDK 17+ | Temurin 17. JDK 8 will not work. |
-| Android SDK + NDK | `ANDROID_HOME` and `NDK_HOME` must be set. |
-| Rust Android targets | `rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android` |
+| Tool | Version / Location | Notes |
+|---|---|---|
+| JDK 21 | OpenJDK 21.0.10 | Bundled Android Studio JBR at `C:\Program Files\Android\Android Studio\jbr`. `JAVA_HOME` points here. |
+| Android SDK | API 35 / 36 | `C:\Users\rithv\AppData\Local\Android\Sdk`. `ANDROID_HOME` points here. |
+| Android NDK | `27.1.12297006` | `C:\Users\rithv\AppData\Local\Android\Sdk\ndk\27.1.12297006`. `NDK_HOME` points here. |
+| Android Target Triples | `aarch64`, `armv7`, `i686`, `x86_64` | `rustup target add aarch64-linux-android armv7-linux-androideabi i686-linux-android x86_64-linux-android` |
+| ADB | `1.0.41` (v37.0.0) | `C:\Users\rithv\AppData\Local\Android\Sdk\platform-tools\adb.exe` |
 
 ### Windows note: antivirus and `target/`
 
-Real-time antivirus scanning can hold `.o` files open in `target/` and make
-`cargo` fail with `The process cannot access the file because it is being used by
-another process (os error 32)`. It is intermittent and a rebuild usually
-succeeds. If it happens often, exclude the `target` directory from real-time
-scanning (requires an elevated shell):
+Real-time antivirus scanning can hold `.o` files open in `target/` and make `cargo` fail with `The process cannot access the file because it is being used by another process (os error 32)`. It is intermittent and a rebuild usually succeeds. If it happens often, exclude the `target` directory from real-time scanning (requires an elevated shell):
 
 ```powershell
 Add-MpPreference -ExclusionPath "E:\w\personal AI assistant\target"
 ```
 
-## First-time setup
+---
+
+## Environment Setup
+
+### 1. Root Server Environment (`.env`)
+
+Copy `.env.example` to `.env` at root:
 
 ```powershell
-git clone <repo> && cd personal-assistant
-
-# Secrets. Both files are git-ignored.
 Copy-Item .env.example .env
-Copy-Item apps/mobile/.env.example apps/mobile/.env
-# Set DEV_AUTH_TOKEN in .env and VITE_DEV_AUTH_TOKEN in apps/mobile/.env
-# to the same value.
-
-pnpm install --dir apps/mobile
-cargo build --workspace
 ```
 
-## Running
+Configured variables:
+```env
+ASSISTANT_BIND_ADDR=0.0.0.0:8787
+DEV_AUTH_TOKEN=local-dev-token
+ASSISTANT_ALLOWED_ORIGINS=http://localhost:1420
+ASSISTANT_MAX_TOOL_ROUNDS=4
+RUST_LOG=assistant_server=debug,tower_http=debug,info
 
-Two terminals.
+# Database (Supabase Session Pooler on port 5432)
+DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
+
+# Runtime Model Credentials (Server only)
+# ANTHROPIC_API_KEY=sk-ant-api03-...
+```
+
+### 2. Mobile Client Environment (`apps/mobile/.env`)
+
+Copy `apps/mobile/.env.example` to `apps/mobile/.env`:
 
 ```powershell
-# 1. the server
-cargo run -p assistant-server
-#    or: pwsh scripts/dev-server.ps1
+Copy-Item apps/mobile/.env.example apps/mobile/.env
+```
 
-# 2. the app (desktop)
+Configured variables:
+```env
+VITE_SERVER_BASE_URL=http://127.0.0.1:8787
+VITE_DEV_AUTH_TOKEN=local-dev-token
+```
+
+> [!IMPORTANT]
+> Secrets (`DATABASE_URL`, `ANTHROPIC_API_KEY`) belong strictly in the root `.env` server environment. Never put database credentials or provider secrets in `apps/mobile/.env` or `VITE_*` variables.
+
+---
+
+## Running the Application
+
+Two terminals:
+
+```powershell
+# Terminal 1: Rust Axum Backend Server
+cargo run -p assistant-server
+
+# Terminal 2: React + Tauri Desktop App
 pnpm --dir apps/mobile tauri dev
 ```
 
-Home should show the server as **Degraded** (up, but no database configured) with
-a latency figure. "Unreachable" means the server is not running, or
-`VITE_SERVER_BASE_URL` points somewhere the device cannot reach.
+### Mobile / Android Development
 
-### Frontend only, no Tauri
+Initialize Android project once:
 
 ```powershell
-pnpm --dir apps/mobile dev     # http://localhost:1420
-```
+# 1. Initialize Android Studio Gradle project
+pnpm --dir apps/mobile tauri android init
 
-The page renders, but every server call fails: `invoke` only exists inside a
-Tauri webview. Use this for pure styling work.
-
-### Android
-
-Prerequisites above must be installed first.
-
-```powershell
-pnpm --dir apps/mobile tauri android init     # once
+# 2. Run Android live dev server (emulator or connected physical device)
 pnpm --dir apps/mobile tauri android dev
 ```
 
-Set `VITE_SERVER_BASE_URL` in `apps/mobile/.env` to something the device can
-reach — `http://10.0.2.2:8787` from the emulator, or your machine's LAN IP from a
-physical device. The server already binds `0.0.0.0` for this reason.
-
-## Database
-
-The server runs without one and reports itself degraded, which is enough for
-frontend work. To connect a real database, set `DATABASE_URL` in `.env` to the
-Supabase Postgres connection string, then:
+Build installable APK:
 
 ```powershell
+pnpm --dir apps/mobile tauri android build -- --apk
+```
+
+Output APK location:
+`apps/mobile/src-tauri/gen/android/app/build/outputs/apk/debug/app-debug.apk`
+
+Install on connected Android device via ADB:
+
+```powershell
+adb devices
+adb install apps/mobile/src-tauri/gen/android/app/build/outputs/apk/debug/app-debug.apk
+```
+
+---
+
+## Database & Migrations
+
+The server runs in **Degraded** mode without a database. To connect Supabase PostgreSQL, set `DATABASE_URL` in `.env` and run migrations:
+
+```powershell
+# 1. Install sqlx-cli (once)
 cargo install sqlx-cli --no-default-features --features postgres,rustls
-$env:DATABASE_URL = "<connection string>"
+
+# 2. Apply migrations
+$env:DATABASE_URL = "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
 pwsh scripts/migrate.ps1
 ```
 
-Migrations are never applied on boot — see ADR-0006.
+### Supabase Connection String Rules
 
-## Durable action tests
+- **Use Session Pooler (port 5432)** for persistent client connections over IPv4 networks (`postgres.<ref>@aws-N-<region>.pooler.supabase.com:5432`). Do not use transaction pooler mode on port 6543 (transaction mode breaks prepared statements).
 
-`services/assistant-server/tests/durable_actions.rs` exercises approvals,
-executions and audit against a real PostgreSQL. They **skip** when
-`DATABASE_URL` is unset, so the default suite needs no credentials.
+---
+
+## Durable Action Tests
+
+Run PostgreSQL durable actions test suite:
 
 ```powershell
-$env:DATABASE_URL = "<connection string>"
-pwsh scripts/migrate.ps1                       # once, to create the tables
+$env:DATABASE_URL = "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
 cargo test -p assistant-server --test durable_actions
 ```
 
-Two things that will bite you:
+---
 
-* **Supabase direct connections are IPv6-only.** `db.<ref>.supabase.co` has no
-  A record. On an IPv4-only network use the **session pooler** string from
-  Project Settings -> Database -> Connection string -> Session pooler
-  (`postgres.<ref>@aws-N-<region>.pooler.supabase.com:5432`). Session mode, not
-  transaction mode: transaction mode breaks prepared statements.
-* **The pooler caps concurrent clients** (15 on the project this was developed
-  against) and refuses the rest with `EMAXCONNSESSION`. The test harness holds a
-  semaphore to stay under it; if you point the tests at a smaller instance,
-  lower `DB_PERMITS`.
+## Project Verification Checks
 
-## Checks
-
-These are exactly what CI runs.
+These commands are run in CI:
 
 ```powershell
 cargo fmt --all --check
@@ -135,33 +159,3 @@ pnpm --dir apps/mobile typecheck
 pnpm --dir apps/mobile lint
 pnpm --dir apps/mobile build
 ```
-
-## Adding things
-
-**A server endpoint.** Add the request/response types to `assistant-protocol`,
-mirror them in `apps/mobile/src/api/types.ts`, add the handler under
-`services/assistant-server/src/routes/`, register it in `routes/mod.rs` (public
-or behind the auth layer), and add an integration test to
-`services/assistant-server/tests/api.rs`.
-
-**A frontend server call.** Add a `#[tauri::command]` in
-`apps/mobile/src-tauri/src/lib.rs`, register it in `invoke_handler`, and add a
-wrapper to `apps/mobile/src/api/bridge.ts`. React components call the wrapper —
-never `fetch` — see ADR-0008.
-
-**A dependency.** Declare the version in `[workspace.dependencies]` in the root
-`Cargo.toml` and reference it as `foo.workspace = true` in the member crate, so
-versions cannot diverge across the workspace.
-
-**A decision that affects security, the database, auth, model providers, mobile
-architecture, cost, permissions or retention.** Write the ADR in
-`docs/DECISIONS.md` first.
-
-## Secrets
-
-`.env` and `apps/mobile/.env` are git-ignored; only `.env.example` files are
-committed, and CI fails the build if a `.env` is ever tracked.
-
-`VITE_*` variables are inlined into the JavaScript bundle at build time. Only
-development placeholders belong there. Real OAuth client secrets and provider API
-keys live on the server and never reach the device — see ADR-0008 and ADR-0009.
