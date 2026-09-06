@@ -123,7 +123,7 @@ export async function loadConnection(): Promise<ConnectionState> {
 
   return {
     kind: "connected",
-    healthy: health.status === "ok" && cacheReady,
+    healthy: health.status === "ok",
     detail: parts.join(" - "),
   };
 }
