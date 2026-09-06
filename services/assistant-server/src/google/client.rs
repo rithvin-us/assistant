@@ -698,6 +698,22 @@ impl GmailProvider for GoogleClient {
             .map(|arr| arr.iter().any(|l| l.as_str() == Some("UNREAD")))
             .unwrap_or(false);
 
+        // If unread, remove UNREAD label on Gmail server
+        if is_unread {
+            let modify_url = format!(
+                "https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/modify"
+            );
+            let _ = self
+                .http
+                .post(&modify_url)
+                .bearer_auth(&token)
+                .json(&serde_json::json!({
+                    "removeLabelIds": ["UNREAD"]
+                }))
+                .send()
+                .await;
+        }
+
         let date = full["internalDate"]
             .as_str()
             .and_then(|d| d.parse::<i64>().ok())

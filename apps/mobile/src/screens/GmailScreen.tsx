@@ -235,6 +235,11 @@ export default function GmailScreen({ onBack }: GmailScreenProps) {
     setEmailDetail(null);
     setDragOffsetY(0);
 
+    // Optimistically mark email as read in local state without removing it from list
+    setEmails((prev) =>
+      prev.map((e) => (e.id === email.id ? { ...e, is_unread: false } : e))
+    );
+
     try {
       setLoadingDetail(true);
       const detail = await readGmail(selectedAccountId, email.id);
