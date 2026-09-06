@@ -5,9 +5,12 @@
 //! same logic serves desktop and Android and can later be reused by native
 //! Kotlin/Swift surfaces.
 
+mod conversation;
 mod local_db;
 
 use std::time::Duration;
+
+use std::sync::Arc;
 
 use assistant_protocol::HealthResponse;
 use serde::Serialize;
@@ -121,9 +124,17 @@ pub fn run() {
                 http: reqwest::Client::new(),
                 local,
             });
+            app.manage(Arc::new(conversation::Connection::default()));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![probe_server, local_cache_ready])
+        .invoke_handler(tauri::generate_handler![
+            probe_server,
+            local_cache_ready,
+            conversation::conversation_open,
+            conversation::conversation_send,
+            conversation::conversation_close,
+            conversation::conversation_is_open,
+        ])
         .run(tauri::generate_context!())
         .expect("error while running the Tauri application");
 }

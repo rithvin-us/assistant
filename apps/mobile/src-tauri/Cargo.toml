@@ -24,14 +24,19 @@ tauri-plugin-opener = "2"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["sync", "rt", "macros"] }
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
 # The shell talks to the server itself rather than letting the webview do it:
 # it keeps the request path identical on desktop and Android, and avoids CORS
 # and cleartext-HTTP policy differences between the two webviews.
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }
+reqwest = { workspace = true }
+
+# The conversation WebSocket. Opened by the shell, never by the webview, for
+# the same reason as the HTTP client above.
+tokio-tungstenite = { version = "0.28", features = ["rustls-tls-webpki-roots"] }
+futures-util = "0.3"
 
 # Local offline cache. Deliberately not a mirror of the cloud schema.
 sqlx = { workspace = true, features = ["sqlite"] }

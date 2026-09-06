@@ -26,9 +26,9 @@ export const SERVER_BASE_URL: string =
  * only; real authentication replaces it, and no production secret ever belongs
  * in the frontend bundle.
  */
-const DEV_TOKEN: string = import.meta.env.VITE_DEV_AUTH_TOKEN ?? "";
+export const DEV_TOKEN: string = import.meta.env.VITE_DEV_AUTH_TOKEN ?? "";
 
-const isTauri =
+export const isTauri =
   typeof window !== "undefined" &&
   ("__TAURI_INTERNALS__" in window || "__TAURI_PATTERN__" in window || "__TAURI__" in window);
 
