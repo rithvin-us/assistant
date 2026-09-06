@@ -16,36 +16,42 @@ import Fab from "@mui/material/Fab";
 import ChatBubbleOutlineRoundedIcon from "@mui/icons-material/ChatBubbleOutlineRounded";
 
 import HomeScreen from "./screens/HomeScreen";
-import ProductivityScreen, { type ProductivityTab } from "./screens/ProductivityScreen";
+import TasksScreen from "./screens/TasksScreen";
+import RemindersScreen from "./screens/RemindersScreen";
+import NotesScreen from "./screens/NotesScreen";
+import IdeasScreen from "./screens/IdeasScreen";
 import ConversationSheet from "./components/ConversationSheet";
+
+export type ScreenType = "home" | "tasks" | "reminders" | "notes" | "ideas";
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
-  const [currentScreen, setCurrentScreen] = useState<"home" | "productivity">("home");
-  const [productivityTab, setProductivityTab] = useState<ProductivityTab>("tasks");
-
-  const handleOpenProductivity = (tab: ProductivityTab) => {
-    setProductivityTab(tab);
-    setCurrentScreen("productivity");
-  };
+  const [currentScreen, setCurrentScreen] = useState<ScreenType>("home");
 
   return (
     <Box
       sx={{
         height: "100dvh",
         bgcolor: "background.default",
-        px: currentScreen === "productivity" ? 0 : 3,
+        px: currentScreen === "home" ? 3 : 0,
         pt: "env(safe-area-inset-top)",
         pb: "env(safe-area-inset-bottom)",
       }}
     >
-      {currentScreen === "home" ? (
-        <HomeScreen onOpenProductivity={handleOpenProductivity} />
-      ) : (
-        <ProductivityScreen
-          initialTab={productivityTab}
-          onBack={() => setCurrentScreen("home")}
-        />
+      {currentScreen === "home" && (
+        <HomeScreen onOpenScreen={(screen) => setCurrentScreen(screen)} />
+      )}
+      {currentScreen === "tasks" && (
+        <TasksScreen onBack={() => setCurrentScreen("home")} />
+      )}
+      {currentScreen === "reminders" && (
+        <RemindersScreen onBack={() => setCurrentScreen("home")} />
+      )}
+      {currentScreen === "notes" && (
+        <NotesScreen onBack={() => setCurrentScreen("home")} />
+      )}
+      {currentScreen === "ideas" && (
+        <IdeasScreen onBack={() => setCurrentScreen("home")} />
       )}
 
       {currentScreen === "home" && (
@@ -70,4 +76,5 @@ export default function App() {
     </Box>
   );
 }
+
 

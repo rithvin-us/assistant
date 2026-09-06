@@ -38,12 +38,12 @@ const AI_THINKING_STAGES = [
 ];
 
 import ChecklistRoundedIcon from "@mui/icons-material/ChecklistRounded";
-import type { ProductivityTab } from "./ProductivityScreen";
+import type { ScreenType } from "../App";
 
 export default function HomeScreen({
-  onOpenProductivity,
+  onOpenScreen,
 }: {
-  onOpenProductivity?: (tab: ProductivityTab) => void;
+  onOpenScreen?: (screen: ScreenType) => void;
 }) {
   const [connection, setConnection] = useState<ConnectionState>(CHECKING);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -409,10 +409,10 @@ export default function HomeScreen({
           </Typography>
         </Box>
         <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-          {onOpenProductivity && (
+          {onOpenScreen && (
             <IconButton
               size="small"
-              onClick={() => onOpenProductivity("tasks")}
+              onClick={() => onOpenScreen("tasks")}
               sx={{ color: "primary.main" }}
               aria-label="Open Tasks"
             >
@@ -535,8 +535,8 @@ export default function HomeScreen({
         open={sheetOpen}
         onClose={() => setSheetOpen(false)}
         connection={connection}
-        onSelectTab={(tab) => {
-          if (onOpenProductivity) onOpenProductivity(tab);
+        onSelectScreen={(screen) => {
+          if (onOpenScreen) onOpenScreen(screen);
         }}
       />
     </Box>

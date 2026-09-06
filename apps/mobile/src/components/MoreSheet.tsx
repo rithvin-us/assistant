@@ -28,18 +28,18 @@ import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
 import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 
 import type { ConnectionState } from "../api/bridge";
-import type { ProductivityTab } from "../screens/ProductivityScreen";
+import type { ScreenType } from "../App";
 
 export default function MoreSheet({
   open,
   onClose,
   connection,
-  onSelectTab,
+  onSelectScreen,
 }: {
   open: boolean;
   onClose: () => void;
   connection: ConnectionState;
-  onSelectTab: (tab: ProductivityTab) => void;
+  onSelectScreen: (screen: ScreenType) => void;
 }) {
   const FEATURES = [
     {
@@ -47,28 +47,28 @@ export default function MoreSheet({
       label: "Tasks",
       note: "Standalone task management & priorities",
       enabled: true,
-      tab: "tasks" as ProductivityTab,
+      screen: "tasks" as ScreenType,
     },
     {
       icon: <AlarmRoundedIcon color="primary" />,
       label: "Reminders",
       note: "Scheduled reminders & notifications",
       enabled: true,
-      tab: "reminders" as ProductivityTab,
+      screen: "reminders" as ScreenType,
     },
     {
       icon: <DescriptionOutlinedIcon color="primary" />,
       label: "Notes",
       note: "Auto-saving notes & tags",
       enabled: true,
-      tab: "notes" as ProductivityTab,
+      screen: "notes" as ScreenType,
     },
     {
       icon: <LightbulbOutlinedIcon color="primary" />,
       label: "Ideas",
       note: "Capture & convert ideas to tasks",
       enabled: true,
-      tab: "ideas" as ProductivityTab,
+      screen: "ideas" as ScreenType,
     },
     { icon: <EventRoundedIcon />, label: "Calendar", note: "schedule milestone", enabled: false },
     { icon: <PsychologyRoundedIcon />, label: "Memory", note: "memory milestone", enabled: false },
@@ -122,8 +122,8 @@ export default function MoreSheet({
             key={feature.label}
             disabled={!feature.enabled}
             onClick={() => {
-              if (feature.enabled && feature.tab) {
-                onSelectTab(feature.tab);
+              if (feature.enabled && feature.screen) {
+                onSelectScreen(feature.screen);
                 onClose();
               }
             }}
