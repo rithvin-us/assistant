@@ -24,14 +24,7 @@ export const isTauri =
  */
 const rawServerUrl = import.meta.env.VITE_SERVER_BASE_URL ?? "http://127.0.0.1:8787";
 
-export const SERVER_BASE_URL: string =
-  typeof window !== "undefined" &&
-  (window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1" ||
-    window.location.hostname === "tauri.localhost" ||
-    (isTauri && typeof window !== "undefined" && !/Android/i.test(navigator.userAgent)))
-    ? "http://127.0.0.1:8787"
-    : rawServerUrl;
+export const SERVER_BASE_URL: string = rawServerUrl;
 
 /**
  * Development bearer token. This is a placeholder credential for local work
