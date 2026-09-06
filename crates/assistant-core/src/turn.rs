@@ -180,6 +180,16 @@ pub enum TurnEvent {
         name: String,
         risk: RiskLevel,
         reason: String,
+        /// Identifier of the durable approval the client should answer.
+        ///
+        /// `None` when no durable store is configured, in which case the turn
+        /// still stops but the action was not persisted and cannot be resumed.
+        /// The client is told which case it is rather than being handed an
+        /// approval id that would fail on use.
+        approval_id: Option<uuid::Uuid>,
+        /// Sanitised description for the approval sheet: the tool and the names
+        /// of its arguments, never their values.
+        summary: String,
     },
     ToolStarted {
         call_id: String,

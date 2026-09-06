@@ -35,6 +35,7 @@ use uuid::Uuid;
 
 use crate::{
     CoreError,
+    actions::{ApprovalCoordinator, summarize},
     context::{ContextProvider, EmptyContextProvider},
     deterministic::{DeterministicHandler, DeterministicRouter},
     event::{DomainEvent, EventBus},
@@ -90,6 +91,10 @@ impl Sink {
 pub struct Orchestrator {
     model: Option<Arc<dyn ModelProvider>>,
     executor: Arc<ToolExecutor>,
+    /// Present when a durable store is configured. Without it the turn still
+    /// stops at an approval, but the action is not persisted and cannot be
+    /// resumed -- the honest degraded behaviour, reported to the client.
+    approvals: Option<Arc<ApprovalCoordinator>>,
     context: Arc<dyn ContextProvider>,
     router: Arc<DeterministicRouter>,
     events: Option<EventBus>,
@@ -107,6 +112,21 @@ impl Orchestrator {
 
     pub fn model_name(&self) -> Option<&str> {
         self.model.as_ref().map(|m| m.name())
+    }
+
+    /// The shared executor. Exposed so the approval resume path runs through
+    /// exactly this instance rather than constructing a second one.
+    pub fn executor(&self) -> &Arc<ToolExecutor> {
+        &self.executor
+    }
+
+    /// Attaches the durable approval coordinator after construction.
+    ///
+    /// Exists to break a chicken-and-egg: the coordinator needs this
+    /// orchestrator's executor, so it cannot be supplied to the builder.
+    pub fn with_approvals(mut self, approvals: Option<Arc<ApprovalCoordinator>>) -> Self {
+        self.approvals = approvals;
+        self
     }
 
     /// Runs a turn to completion and returns the whole outcome.
@@ -371,7 +391,14 @@ impl Orchestrator {
             proposed.extend(calls.iter().cloned());
 
             let results = self
-                .run_tool_round(&calls, &request.principal, &cancel, sink)
+                .run_tool_round(
+                    &calls,
+                    &request.principal,
+                    request.turn_id,
+                    request.conversation_id,
+                    &cancel,
+                    sink,
+                )
                 .await?;
 
             messages.push(Message::assistant_tool_calls(text, calls));
@@ -461,10 +488,13 @@ impl Orchestrator {
     /// The whole batch is authorised before any of it runs. That ordering is
     /// deliberate: if one call in a batch needs approval, nothing in that batch
     /// should have already taken effect by the time the user is asked.
+    #[allow(clippy::too_many_arguments)]
     async fn run_tool_round(
         &self,
         calls: &[ToolCall],
         principal: &Principal,
+        turn_id: Uuid,
+        conversation_id: Uuid,
         cancel: &CancellationToken,
         sink: &Sink,
     ) -> Result<Vec<ToolResult>, CoreError> {
@@ -500,11 +530,39 @@ impl Orchestrator {
             match self.executor.decide(&spec, principal) {
                 PermissionDecision::Allow => {}
                 PermissionDecision::RequireApproval { reason } => {
+                    // Persist before telling anyone. If the write fails the turn
+                    // fails: emitting an approval the user could answer, backed
+                    // by nothing, would be worse than stopping.
+                    let approval_id = match &self.approvals {
+                        Some(coordinator) => Some(
+                            coordinator
+                                .propose(
+                                    call,
+                                    principal,
+                                    turn_id,
+                                    conversation_id,
+                                    spec.risk,
+                                    &reason,
+                                )
+                                .await?
+                                .id,
+                        ),
+                        None => {
+                            tracing::warn!(
+                                tool = %spec.name,
+                                "no durable store configured; this approval cannot be resumed"
+                            );
+                            None
+                        }
+                    };
+
                     sink.emit(TurnEvent::ApprovalRequired {
                         call_id: call.id.clone(),
                         name: spec.name.clone(),
                         risk: spec.risk,
                         reason: reason.clone(),
+                        approval_id,
+                        summary: summarize(&spec.name, &call.arguments),
                     })
                     .await;
                     self.publish(DomainEvent::ApprovalRequested {
@@ -653,6 +711,7 @@ pub struct OrchestratorBuilder {
     context: Option<Arc<dyn ContextProvider>>,
     router: Option<Arc<DeterministicRouter>>,
     events: Option<EventBus>,
+    approvals: Option<Arc<ApprovalCoordinator>>,
     config: Option<OrchestratorConfig>,
 }
 
@@ -697,6 +756,18 @@ impl OrchestratorBuilder {
         self
     }
 
+    /// Supplies the durable approval coordinator. Absent means approvals stop
+    /// the turn but are not persisted.
+    pub fn approvals(mut self, approvals: Arc<ApprovalCoordinator>) -> Self {
+        self.approvals = Some(approvals);
+        self
+    }
+
+    pub fn maybe_approvals(mut self, approvals: Option<Arc<ApprovalCoordinator>>) -> Self {
+        self.approvals = approvals;
+        self
+    }
+
     pub fn config(mut self, config: OrchestratorConfig) -> Self {
         self.config = Some(config);
         self
@@ -713,6 +784,7 @@ impl OrchestratorBuilder {
         Orchestrator {
             model: self.model,
             executor: Arc::new(ToolExecutor::new(registry, policy)),
+            approvals: self.approvals,
             context: self
                 .context
                 .unwrap_or_else(|| Arc::new(EmptyContextProvider)),

@@ -17,6 +17,7 @@
 //! [`assistant_tools::Tool`] implementations registered in a [`registry::ToolRegistry`].
 //! None of them requires a change here.
 
+pub mod actions;
 pub mod context;
 pub mod deterministic;
 pub mod error;
@@ -30,6 +31,9 @@ pub mod turn;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
+pub use actions::{
+    ActionStore, ApprovalPolicy, ApprovalRequest, AuditEvent, ExecutionStatus, ToolExecution,
+};
 pub use context::{ContextProvider, EmptyContextProvider, InMemoryContextProvider};
 pub use deterministic::{AssistantStatusHandler, DeterministicHandler, DeterministicRouter};
 pub use error::CoreError;

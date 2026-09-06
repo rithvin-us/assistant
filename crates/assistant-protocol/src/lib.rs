@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// Bumped whenever a breaking change is made to the types in this crate. The
 /// client sends the version it was built against so the server can reject a
 /// mismatched build instead of misparsing it.
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 pub type ConversationId = Uuid;
 pub type MessageId = Uuid;
@@ -57,7 +57,25 @@ pub enum ClientFrame {
     /// Liveness probe. The server answers with [`ServerFrame::Pong`].
     Ping,
     /// A user turn as text. Voice turns will arrive as a separate variant.
-    UserText { text: String },
+    UserText {
+        text: String,
+    },
+
+    /// Ask for the approvals this user still has to answer.
+    ListPendingApprovals,
+
+    /// Answer a pending approval.
+    ///
+    /// The id is the *only* thing the client gets to say. It cannot name a tool,
+    /// supply arguments, assert a risk level, or claim to be a different user:
+    /// the server loads the persisted action by id, scoped to the authenticated
+    /// principal, and that record is authoritative. See ADR-0015.
+    ApproveAction {
+        approval_id: ApprovalId,
+    },
+    RejectAction {
+        approval_id: ApprovalId,
+    },
 }
 
 /// Frames sent by the server over the conversation socket.
@@ -100,6 +118,26 @@ pub enum ServerFrame {
         name: String,
         risk: RiskLevel,
         reason: String,
+        /// The durable approval to answer with [`ClientFrame::ApproveAction`].
+        ///
+        /// `None` means the server has no durable store configured, so the
+        /// action was not persisted and cannot be answered. A client must show
+        /// this as an unactionable notice rather than an Approve button.
+        approval_id: Option<ApprovalId>,
+        /// Sanitised description of the action: the tool and the names of its
+        /// arguments, never their values. See ADR-0016.
+        summary: String,
+    },
+
+    /// The approvals this user still has to answer.
+    PendingApprovals {
+        approvals: Vec<PendingApproval>,
+    },
+
+    /// An approval was answered, and this is what came of it.
+    ApprovalResolved {
+        approval_id: ApprovalId,
+        outcome: ApprovalOutcome,
     },
 
     /// A tool finished. `ok` distinguishes success from a handled failure; a
@@ -132,4 +170,54 @@ pub enum RiskLevel {
     Yellow,
     Orange,
     Red,
+}
+
+pub type ApprovalId = Uuid;
+pub type ExecutionId = Uuid;
+
+/// One row in the approval sheet.
+///
+/// Carries only what a user needs to decide. Deliberately absent: the argument
+/// values, the conversation, and anything about the model. A calendar title is
+/// harmless but an email body is not, and the wire format cannot tell them
+/// apart -- so it carries neither. See ADR-0016.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PendingApproval {
+    pub approval_id: ApprovalId,
+    /// Namespaced tool identifier, e.g. `gmail.send`.
+    pub tool_name: String,
+    /// Authoritative risk, decided server-side. Display only -- a client cannot
+    /// change what running this action requires by altering this value.
+    pub risk: RiskLevel,
+    /// Why approval was asked for, written for a human.
+    pub reason: String,
+    /// The tool and the names of its arguments.
+    pub summary: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    /// After this the approval can no longer be acted on.
+    #[serde(with = "time::serde::rfc3339")]
+    pub expires_at: OffsetDateTime,
+}
+
+/// What happened when an approval was answered.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum ApprovalOutcome {
+    /// Approved, and the action ran. `ok` is false if the tool itself failed.
+    Executed { execution_id: ExecutionId, ok: bool },
+    /// Rejected. Nothing ran.
+    Rejected { execution_id: ExecutionId },
+    /// The window had closed. Nothing ran.
+    Expired,
+    /// Already answered -- typically a double tap. Nothing ran a second time.
+    AlreadyResolved { status: String },
+    /// Policy changed while the approval was pending. Nothing ran.
+    NoLongerPermitted {
+        execution_id: ExecutionId,
+        reason: String,
+    },
+    /// No such approval for this user. Deliberately indistinguishable from an
+    /// approval belonging to somebody else.
+    NotFound,
 }

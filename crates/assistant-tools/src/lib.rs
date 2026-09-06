@@ -39,6 +39,11 @@ pub enum PermissionDecision {
 }
 
 /// Lifecycle state for persistent human-in-the-loop approvals.
+///
+/// The durable record itself is `assistant_core::actions::ApprovalRequest`: it
+/// needs a principal, timestamps and an execution reference, none of which this
+/// crate should know about. The status stays here with the rest of the tool
+/// vocabulary so both crates name the same states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ApprovalStatus {
@@ -47,16 +52,6 @@ pub enum ApprovalStatus {
     Rejected,
     Expired,
     Cancelled,
-}
-
-/// Persistent request created when a tool call yields [`PermissionDecision::RequireApproval`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ApprovalRequest {
-    pub id: serde_json::Value,
-    pub tool_name: String,
-    pub risk_level: RiskLevel,
-    pub status: ApprovalStatus,
-    pub reason: String,
 }
 
 /// A model-proposed or orchestrator-constructed tool call.

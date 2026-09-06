@@ -4,6 +4,8 @@
 //! optional storage, bind, and shut down cleanly. Everything else lives in the
 //! library so it is testable.
 
+use std::sync::Arc;
+
 use assistant_core::{DomainEvent, EventBus};
 use assistant_server::{app, config::Config, db};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
@@ -44,11 +46,25 @@ async fn main() -> anyhow::Result<()> {
     // path still answers, and a turn that needs a model fails with a clear
     // `no_model_provider` rather than a fabricated reply. Real providers and
     // tools arrive with the milestones that implement them.
+    // The durable action store exists only when a database does. Without one the
+    // server still runs: turns still stop at an approval, but the action is not
+    // persisted and the client is told so rather than handed an unusable id.
+    let store = pool.clone().map(|pool| {
+        Arc::new(assistant_server::store::PostgresActionStore::new(pool))
+            as Arc<dyn assistant_core::actions::ActionStore>
+    });
+    if store.is_none() {
+        tracing::warn!("no durable action store; approvals cannot be resumed");
+    }
+
     let router = app(
         &config,
         pool,
         events.clone(),
-        assistant_server::orchestration::Dependencies::default(),
+        assistant_server::orchestration::Dependencies {
+            store,
+            ..Default::default()
+        },
     );
 
     let listener = tokio::net::TcpListener::bind(config.bind_addr).await?;

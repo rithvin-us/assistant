@@ -117,6 +117,7 @@ dependencies = [
 name = "assistant-models"
 version = "0.1.0"
 dependencies = [
+ "assistant-models",
  "assistant-tools",
  "async-trait",
  "futures",
@@ -145,6 +146,7 @@ dependencies = [
  "assistant-models",
  "assistant-protocol",
  "assistant-tools",
+ "async-trait",
  "axum",
  "dotenvy",
  "futures",

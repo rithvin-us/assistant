@@ -10,6 +10,7 @@ pub mod error;
 pub mod orchestration;
 pub mod routes;
 pub mod state;
+pub mod store;
 
 use std::sync::Arc;
 
@@ -32,12 +33,14 @@ pub fn app(
     events: EventBus,
     deps: orchestration::Dependencies,
 ) -> Router {
-    let orchestrator = orchestration::build(deps, events.clone(), config.max_tool_rounds);
+    let (orchestrator, approvals) =
+        orchestration::build(deps, events.clone(), config.max_tool_rounds);
 
     let state = Arc::new(AppState {
         verifier: Arc::new(DevTokenVerifier::new(config.dev_auth_token.clone())),
         events,
         orchestrator: Arc::new(orchestrator),
+        approvals,
         db,
     });
 

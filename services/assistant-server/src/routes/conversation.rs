@@ -7,8 +7,13 @@
 //! know this file exists.
 
 use assistant_auth::Principal;
-use assistant_core::{DomainEvent, turn::TurnRequest};
-use assistant_protocol::{ApiError, ClientFrame, PROTOCOL_VERSION, ServerFrame};
+use assistant_core::{
+    DomainEvent,
+    actions::{ApprovalId, ResolutionOutcome},
+    turn::TurnRequest,
+};
+use assistant_protocol::{ApiError, ApprovalOutcome, ClientFrame, PROTOCOL_VERSION, ServerFrame};
+use assistant_tools::ApprovalStatus;
 use axum::{
     Extension,
     extract::{
@@ -111,6 +116,45 @@ async fn handle(
                     break;
                 }
             }
+
+            ClientFrame::ListPendingApprovals => {
+                let frame = pending_approvals(&state, &principal).await;
+                if send(&mut socket, frame).await.is_err() {
+                    break;
+                }
+            }
+
+            // The client supplies an id and nothing else. It cannot name a tool,
+            // pass arguments, assert a risk, or claim to be another user: the
+            // server loads the persisted action, scoped to the authenticated
+            // principal, and that record decides what happens. See ADR-0015.
+            ClientFrame::ApproveAction { approval_id } => {
+                let frame = resolve_approval(
+                    &state,
+                    &principal,
+                    approval_id,
+                    ApprovalStatus::Approved,
+                    socket_cancel.child_token(),
+                )
+                .await;
+                if send(&mut socket, frame).await.is_err() {
+                    break;
+                }
+            }
+
+            ClientFrame::RejectAction { approval_id } => {
+                let frame = resolve_approval(
+                    &state,
+                    &principal,
+                    approval_id,
+                    ApprovalStatus::Rejected,
+                    socket_cancel.child_token(),
+                )
+                .await;
+                if send(&mut socket, frame).await.is_err() {
+                    break;
+                }
+            }
         }
     }
 
@@ -160,4 +204,93 @@ async fn run_turn(
 async fn send(socket: &mut WebSocket, frame: ServerFrame) -> Result<(), axum::Error> {
     let text = serde_json::to_string(&frame).expect("ServerFrame is always serialisable");
     socket.send(Message::Text(text.into())).await
+}
+
+/// Lists the approvals this principal still has to answer.
+async fn pending_approvals(state: &SharedState, principal: &Principal) -> ServerFrame {
+    let Some(coordinator) = &state.approvals else {
+        return ServerFrame::Error(ApiError {
+            code: "no_durable_store".into(),
+            message: "this deployment has no database, so approvals are not stored".into(),
+        });
+    };
+
+    match coordinator
+        .store()
+        .pending_approvals(principal.user_id)
+        .await
+    {
+        Ok(approvals) => ServerFrame::PendingApprovals {
+            approvals: approvals
+                .into_iter()
+                .map(orchestration::to_pending)
+                .collect(),
+        },
+        Err(error) => {
+            tracing::error!(%error, "could not list pending approvals");
+            ServerFrame::Error(ApiError {
+                code: "internal".into(),
+                message: "could not list pending approvals".into(),
+            })
+        }
+    }
+}
+
+/// Answers one approval and reports what came of it.
+#[tracing::instrument(
+    skip(state, principal, cancel),
+    fields(user_id = %principal.user_id, approval_id = %approval_id, outcome = ?outcome)
+)]
+async fn resolve_approval(
+    state: &SharedState,
+    principal: &Principal,
+    approval_id: ApprovalId,
+    outcome: ApprovalStatus,
+    cancel: CancellationToken,
+) -> ServerFrame {
+    let Some(coordinator) = &state.approvals else {
+        return ServerFrame::Error(ApiError {
+            code: "no_durable_store".into(),
+            message: "this deployment has no database, so approvals cannot be answered".into(),
+        });
+    };
+
+    let resolution = coordinator
+        .resolve(approval_id, principal, outcome, &cancel)
+        .await;
+
+    let outcome = match resolution {
+        Ok(ResolutionOutcome::Executed { execution_id, ok }) => {
+            ApprovalOutcome::Executed { execution_id, ok }
+        }
+        Ok(ResolutionOutcome::Rejected { execution_id }) => {
+            ApprovalOutcome::Rejected { execution_id }
+        }
+        Ok(ResolutionOutcome::Expired { .. }) => ApprovalOutcome::Expired,
+        Ok(ResolutionOutcome::AlreadyResolved { status }) => ApprovalOutcome::AlreadyResolved {
+            status: assistant_core::actions::ApprovalTransitions::as_str(status).to_string(),
+        },
+        Ok(ResolutionOutcome::NoLongerPermitted {
+            execution_id,
+            reason,
+        }) => ApprovalOutcome::NoLongerPermitted {
+            execution_id,
+            reason,
+        },
+        // Not found and not-yours are the same answer on purpose: a caller must
+        // not be able to discover that somebody else has a pending approval.
+        Err(error) if error.code() == "approval_not_found" => ApprovalOutcome::NotFound,
+        Err(error) => {
+            tracing::error!(code = error.code(), ?error, "could not resolve approval");
+            return ServerFrame::Error(ApiError {
+                code: error.code().to_string(),
+                message: error.to_string(),
+            });
+        }
+    };
+
+    ServerFrame::ApprovalResolved {
+        approval_id,
+        outcome,
+    }
 }

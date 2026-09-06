@@ -8,7 +8,7 @@
  */
 
 /** Must equal `assistant_protocol::PROTOCOL_VERSION`. */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
 
 export type HealthStatus = "ok" | "degraded";
 
@@ -29,7 +29,43 @@ export interface ApiError {
 /** Frames the client sends over `WS /v1/conversation/:id/stream`. */
 export type ClientFrame =
   | { type: "ping" }
-  | { type: "user_text"; text: string };
+  | { type: "user_text"; text: string }
+  /** Ask for the approvals this user still has to answer. */
+  | { type: "list_pending_approvals" }
+  /**
+   * Answer a pending approval.
+   *
+   * The id is the only thing the client gets to say. It cannot name a tool,
+   * supply arguments, assert a risk, or claim to be another user: the server
+   * loads the persisted action by id, scoped to the authenticated principal,
+   * and that record is authoritative.
+   */
+  | { type: "approve_action"; approval_id: string }
+  | { type: "reject_action"; approval_id: string };
+
+/** One row in the approval sheet. Carries no argument values. */
+export interface PendingApproval {
+  approval_id: string;
+  tool_name: string;
+  /** Decided server-side. Display only. */
+  risk: RiskLevel;
+  reason: string;
+  /** The tool and the names of its arguments, never their values. */
+  summary: string;
+  /** RFC 3339. */
+  created_at: string;
+  /** RFC 3339. After this the approval can no longer be acted on. */
+  expires_at: string;
+}
+
+/** What happened when an approval was answered. */
+export type ApprovalOutcome =
+  | { state: "executed"; execution_id: string; ok: boolean }
+  | { state: "rejected"; execution_id: string }
+  | { state: "expired" }
+  | { state: "already_resolved"; status: string }
+  | { state: "no_longer_permitted"; execution_id: string; reason: string }
+  | { state: "not_found" };
 
 /**
  * Risk classification of a tool, for display only.
@@ -54,6 +90,20 @@ export type ServerFrame =
       name: string;
       risk: RiskLevel;
       reason: string;
+      /**
+       * The durable approval to answer. `null` means the server has no database
+       * configured, so the action was not persisted and cannot be approved --
+       * show it as a notice, not an Approve button.
+       */
+      approval_id: string | null;
+      /** The tool and the names of its arguments, never their values. */
+      summary: string;
+    }
+  | { type: "pending_approvals"; approvals: PendingApproval[] }
+  | {
+      type: "approval_resolved";
+      approval_id: string;
+      outcome: ApprovalOutcome;
     }
   /** A tool finished. `ok` is false for a handled failure, which does not end the turn. */
   | { type: "tool_completed"; call_id: string; name: string; ok: boolean }

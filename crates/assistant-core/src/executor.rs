@@ -99,6 +99,26 @@ impl ToolExecutor {
             }
         }
 
+        self.run_authorized(call, &spec, cancel).await
+    }
+
+    /// Runs a call that has **already** been authorised.
+    ///
+    /// This is the only function in the codebase that invokes
+    /// [`assistant_tools::Tool::execute`]. Both paths converge here: the
+    /// in-turn path via [`Self::execute`], and the resumed path after a human
+    /// approved a held action. Approval changes whether this is reached, never
+    /// how execution happens.
+    ///
+    /// It is not public API for skipping policy — the caller must have obtained
+    /// `spec` from the registry and passed it through
+    /// [`PermissionPolicy::evaluate`] first. `execute` does exactly that.
+    pub async fn run_authorized(
+        &self,
+        call: &ToolCall,
+        spec: &ToolSpec,
+        cancel: &CancellationToken,
+    ) -> Result<ToolResult, CoreError> {
         let tool = self
             .registry
             .get(&call.name)

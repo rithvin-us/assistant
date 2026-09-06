@@ -227,6 +227,7 @@ async fn a_tool_turn_streams_proposal_completion_and_end() {
     let addr = spawn_with(Dependencies {
         model: Some(model),
         tools: registry_of(vec![tool.clone()]),
+        ..Default::default()
     })
     .await;
 
@@ -271,6 +272,7 @@ async fn an_approval_required_tool_halts_the_turn_over_the_socket() {
     let addr = spawn_with(Dependencies {
         model: Some(model),
         tools: registry_of(vec![dangerous.clone()]),
+        ..Default::default()
     })
     .await;
 
@@ -366,6 +368,7 @@ async fn the_tool_round_limit_is_enforced_across_the_socket() {
         Dependencies {
             model: Some(model),
             tools: registry_of(vec![tool.clone()]),
+            ..Default::default()
         },
     )
     .await;
@@ -438,4 +441,222 @@ fn the_logged_request_path_never_contains_the_query_string() {
         "the token reached the value the request span records"
     );
     assert!(!uri.path().contains('?'));
+}
+
+// ------------------------------------------------- durable approval round trip
+
+/// Opens a store against `DATABASE_URL`, or `None` when none is configured.
+async fn action_store() -> Option<Arc<dyn assistant_core::actions::ActionStore>> {
+    let _ = dotenvy::dotenv();
+    let url = std::env::var("DATABASE_URL")
+        .ok()
+        .filter(|s| !s.is_empty())?;
+
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(30))
+        .connect(&url)
+        .await
+        .expect("DATABASE_URL is set but the database is unreachable");
+
+    Some(Arc::new(assistant_server::store::PostgresActionStore::new(
+        pool,
+    )))
+}
+
+/// The whole point of the milestone, over the wire.
+///
+/// A `Red` tool is proposed, held, persisted, answered by id over the socket,
+/// and executed — with the client never naming the tool or its arguments.
+#[tokio::test]
+async fn a_held_action_is_approved_over_the_socket_and_then_executes() {
+    let Some(store) = action_store().await else {
+        eprintln!("skipped: DATABASE_URL is not set");
+        return;
+    };
+
+    let model = Arc::new(MockModelProvider::new(vec![MockResponse::ToolCalls(vec![
+        ToolCall {
+            id: "c1".into(),
+            name: "gmail.send".into(),
+            arguments: serde_json::json!({"to": "prof@example.edu"}),
+        },
+    ])]));
+    let dangerous = Arc::new(EchoTool::red("gmail.send"));
+
+    let addr = spawn_with(Dependencies {
+        model: Some(model),
+        tools: registry_of(vec![dangerous.clone()]),
+        store: Some(store),
+        ..Default::default()
+    })
+    .await;
+
+    let (mut socket, _) = connect(addr).await;
+    say(&mut socket, "email my professor").await;
+    let frames = drain_turn(&mut socket).await;
+
+    // The action was persisted, so the client is given something to answer.
+    let (approval_id, summary) = frames
+        .iter()
+        .find_map(|frame| match frame {
+            ServerFrame::ApprovalRequired {
+                approval_id,
+                summary,
+                ..
+            } => Some((*approval_id, summary.clone())),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("no ApprovalRequired frame: {frames:?}"));
+
+    let approval_id = approval_id.expect("a durable store must yield an approval id");
+    assert!(summary.contains("gmail.send"));
+    assert!(
+        !summary.contains("prof@example.edu"),
+        "an argument value reached the client: {summary}"
+    );
+    assert_eq!(dangerous.calls(), 0, "the tool ran before approval");
+
+    // Listing shows it as pending.
+    let list = serde_json::to_string(&ClientFrame::ListPendingApprovals).unwrap();
+    socket
+        .send(tungstenite::Message::Text(list.into()))
+        .await
+        .expect("sent");
+    match next_frame(&mut socket).await {
+        ServerFrame::PendingApprovals { approvals } => {
+            assert!(
+                approvals.iter().any(|a| a.approval_id == approval_id),
+                "the held action was not listed as pending"
+            );
+        }
+        other => panic!("expected PendingApprovals, got {other:?}"),
+    }
+
+    // Approve by id and nothing else.
+    let approve = serde_json::to_string(&ClientFrame::ApproveAction { approval_id }).unwrap();
+    socket
+        .send(tungstenite::Message::Text(approve.into()))
+        .await
+        .expect("sent");
+
+    match next_frame(&mut socket).await {
+        ServerFrame::ApprovalResolved { outcome, .. } => match outcome {
+            assistant_protocol::ApprovalOutcome::Executed { ok, .. } => assert!(ok),
+            other => panic!("expected execution, got {other:?}"),
+        },
+        other => panic!("expected ApprovalResolved, got {other:?}"),
+    }
+    assert_eq!(
+        dangerous.calls(),
+        1,
+        "the approved tool did not run exactly once"
+    );
+
+    // A second tap must not run it again.
+    let again = serde_json::to_string(&ClientFrame::ApproveAction { approval_id }).unwrap();
+    socket
+        .send(tungstenite::Message::Text(again.into()))
+        .await
+        .expect("sent");
+    match next_frame(&mut socket).await {
+        ServerFrame::ApprovalResolved { outcome, .. } => assert!(
+            matches!(
+                outcome,
+                assistant_protocol::ApprovalOutcome::AlreadyResolved { .. }
+            ),
+            "a second tap was not recognised as a duplicate: {outcome:?}"
+        ),
+        other => panic!("expected ApprovalResolved, got {other:?}"),
+    }
+    assert_eq!(dangerous.calls(), 1, "a double tap executed the tool twice");
+}
+
+/// Rejecting over the socket must never execute.
+#[tokio::test]
+async fn a_held_action_rejected_over_the_socket_never_executes() {
+    let Some(store) = action_store().await else {
+        eprintln!("skipped: DATABASE_URL is not set");
+        return;
+    };
+
+    let model = Arc::new(MockModelProvider::new(vec![MockResponse::ToolCalls(vec![
+        ToolCall {
+            id: "c1".into(),
+            name: "gmail.send".into(),
+            arguments: serde_json::json!({"to": "prof@example.edu"}),
+        },
+    ])]));
+    let dangerous = Arc::new(EchoTool::red("gmail.send"));
+
+    let addr = spawn_with(Dependencies {
+        model: Some(model),
+        tools: registry_of(vec![dangerous.clone()]),
+        store: Some(store),
+        ..Default::default()
+    })
+    .await;
+
+    let (mut socket, _) = connect(addr).await;
+    say(&mut socket, "email my professor").await;
+    let frames = drain_turn(&mut socket).await;
+
+    let approval_id = frames
+        .iter()
+        .find_map(|frame| match frame {
+            ServerFrame::ApprovalRequired { approval_id, .. } => *approval_id,
+            _ => None,
+        })
+        .expect("an approval id");
+
+    let reject = serde_json::to_string(&ClientFrame::RejectAction { approval_id }).unwrap();
+    socket
+        .send(tungstenite::Message::Text(reject.into()))
+        .await
+        .expect("sent");
+
+    match next_frame(&mut socket).await {
+        ServerFrame::ApprovalResolved { outcome, .. } => assert!(
+            matches!(
+                outcome,
+                assistant_protocol::ApprovalOutcome::Rejected { .. }
+            ),
+            "expected rejection, got {outcome:?}"
+        ),
+        other => panic!("expected ApprovalResolved, got {other:?}"),
+    }
+    assert_eq!(dangerous.calls(), 0, "a rejected action executed");
+}
+
+/// An approval belonging to somebody else is reported as missing, not forbidden.
+#[tokio::test]
+async fn answering_an_unknown_approval_reports_not_found() {
+    let Some(store) = action_store().await else {
+        eprintln!("skipped: DATABASE_URL is not set");
+        return;
+    };
+
+    let addr = spawn_with(Dependencies {
+        store: Some(store),
+        ..Default::default()
+    })
+    .await;
+
+    let (mut socket, _) = connect(addr).await;
+    let approve = serde_json::to_string(&ClientFrame::ApproveAction {
+        approval_id: uuid::Uuid::new_v4(),
+    })
+    .unwrap();
+    socket
+        .send(tungstenite::Message::Text(approve.into()))
+        .await
+        .expect("sent");
+
+    match next_frame(&mut socket).await {
+        ServerFrame::ApprovalResolved { outcome, .. } => assert!(
+            matches!(outcome, assistant_protocol::ApprovalOutcome::NotFound),
+            "expected NotFound, got {outcome:?}"
+        ),
+        other => panic!("expected ApprovalResolved, got {other:?}"),
+    }
 }

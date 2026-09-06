@@ -8,10 +8,12 @@ use std::sync::Arc;
 
 use assistant_core::{
     AssistantStatusHandler, DeterministicRouter, EventBus, Orchestrator, OrchestratorConfig,
-    RiskBasedPolicy, ToolRegistry, turn::TurnEvent,
+    RiskBasedPolicy, ToolRegistry,
+    actions::{ActionStore, ApprovalCoordinator, ApprovalPolicy},
+    turn::TurnEvent,
 };
 use assistant_models::{ModelId, ModelProvider};
-use assistant_protocol::{ApiError, RiskLevel, ServerFrame};
+use assistant_protocol::{ApiError, PendingApproval, RiskLevel, ServerFrame};
 
 /// Everything the orchestrator needs that is not plain configuration.
 ///
@@ -25,6 +27,16 @@ pub struct Dependencies {
     /// capability that does not exist; real tools arrive with the integration
     /// milestones that implement them.
     pub tools: Arc<ToolRegistry>,
+    /// Durable storage for approvals, executions and audit.
+    ///
+    /// `None` when no `DATABASE_URL` is configured. The server still runs and
+    /// the turn still stops at an approval, but the action is not persisted and
+    /// cannot be resumed. `/v1/health` already reports that state as degraded,
+    /// and the client is told `approval_id: null` rather than being handed an
+    /// id that would fail on use.
+    pub store: Option<Arc<dyn ActionStore>>,
+    /// How long a pending approval stays answerable.
+    pub approval_policy: ApprovalPolicy,
 }
 
 impl Default for Dependencies {
@@ -32,13 +44,29 @@ impl Default for Dependencies {
         Self {
             model: None,
             tools: Arc::new(ToolRegistry::new()),
+            store: None,
+            approval_policy: ApprovalPolicy::default(),
         }
     }
 }
 
 /// Builds the orchestrator this deployment will use.
-pub fn build(deps: Dependencies, events: EventBus, max_tool_rounds: usize) -> Orchestrator {
-    let Dependencies { model, tools } = deps;
+///
+/// Returns the orchestrator and, when a durable store was supplied, the
+/// coordinator that resumes approved actions. Both share one [`ToolExecutor`]:
+/// the resume path must run through the same executor as the in-turn path, not
+/// a second one built alongside it.
+pub fn build(
+    deps: Dependencies,
+    events: EventBus,
+    max_tool_rounds: usize,
+) -> (Orchestrator, Option<Arc<ApprovalCoordinator>>) {
+    let Dependencies {
+        model,
+        tools,
+        store,
+        approval_policy,
+    } = deps;
     let registry = tools;
 
     // The status handler answers from real process state, so it is wired with
@@ -50,18 +78,47 @@ pub fn build(deps: Dependencies, events: EventBus, max_tool_rounds: usize) -> Or
         ))),
     );
 
-    Orchestrator::builder()
+    // Built first so the coordinator can borrow its executor.
+    let orchestrator = Orchestrator::builder()
         .registry(registry)
         .policy(Arc::new(RiskBasedPolicy::new()))
         .router(router)
-        .events(events)
+        .events(events.clone())
         .config(OrchestratorConfig {
             max_tool_rounds,
             model: ModelId("default".to_string()),
             system_prompt: None,
         })
         .maybe_model(model)
-        .build()
+        .build();
+
+    let coordinator = store.map(|store| {
+        Arc::new(ApprovalCoordinator::new(
+            store,
+            orchestrator.executor().clone(),
+            approval_policy,
+            Some(events),
+        ))
+    });
+
+    // Rebuilding with the coordinator attached keeps `Orchestrator`'s fields
+    // private and its construction in one place.
+    let orchestrator = orchestrator.with_approvals(coordinator.clone());
+
+    (orchestrator, coordinator)
+}
+
+/// Projects a durable approval onto the wire shape the client renders.
+pub fn to_pending(approval: assistant_core::actions::ApprovalRequest) -> PendingApproval {
+    PendingApproval {
+        approval_id: approval.id,
+        summary: format!("{} awaiting your approval", approval.tool_name),
+        tool_name: approval.tool_name,
+        risk: risk_to_wire(approval.risk),
+        reason: approval.reason,
+        created_at: approval.created_at,
+        expires_at: approval.expires_at,
+    }
 }
 
 /// Translates one core event into the frame a client should receive.
@@ -91,11 +148,15 @@ pub fn to_frame(event: TurnEvent) -> Option<ServerFrame> {
             name,
             risk,
             reason,
+            approval_id,
+            summary,
         } => Some(ServerFrame::ApprovalRequired {
             call_id,
             name,
             risk: risk_to_wire(risk),
             reason,
+            approval_id,
+            summary,
         }),
 
         TurnEvent::ToolCompleted { call_id, name, ok } => {

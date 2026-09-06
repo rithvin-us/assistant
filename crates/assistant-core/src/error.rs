@@ -52,6 +52,12 @@ pub enum CoreError {
         source: assistant_tools::ToolError,
     },
 
+    /// The approval does not exist, or does not belong to the caller. The two
+    /// are deliberately indistinguishable so a caller cannot probe for other
+    /// users' approvals.
+    #[error("that approval is not available")]
+    ApprovalNotFound(uuid::Uuid),
+
     #[error("the turn was cancelled")]
     Cancelled,
 
@@ -76,6 +82,7 @@ impl CoreError {
             Self::PermissionDenied { .. } => "permission_denied",
             Self::ApprovalRequired { .. } => "approval_required",
             Self::ToolExecutionError { .. } => "tool_execution_error",
+            Self::ApprovalNotFound(_) => "approval_not_found",
             Self::Cancelled => "cancelled",
             Self::IterationLimitExceeded { .. } => "iteration_limit_exceeded",
             Self::Internal(_) => "internal",
