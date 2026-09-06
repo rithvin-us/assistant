@@ -1,0 +1,18 @@
+# Build context is uploaded to Render on every deploy. Keep it small: the
+# Dockerfile copies only the Rust workspace, so everything else is dead weight.
+.git
+.github
+node_modules
+**/node_modules
+target
+**/target
+apps/mobile/dist
+apps/mobile/src
+apps/mobile/public
+docs
+supabase
+tests
+scripts
+.env
+.env.*
+*.md

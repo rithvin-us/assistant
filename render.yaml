@@ -12,8 +12,10 @@ services:
         value: "8787"
       - key: ASSISTANT_BIND_ADDR
         value: "0.0.0.0:8787"
+      # Shared bearer token. Never committed: a value in this file is a
+      # published credential for every protected route.
       - key: DEV_AUTH_TOKEN
-        value: "local-dev-token"
+        sync: false
       - key: DATABASE_URL
         sync: false
       - key: GOOGLE_CLIENT_ID
@@ -22,8 +24,11 @@ services:
         sync: false
       - key: GOOGLE_REDIRECT_URI
         sync: false
+      # AES-GCM key for Google refresh tokens at rest (ADR-0025). Never
+      # committed: with the key in the repo, the ciphertext in Postgres is
+      # plaintext to anyone who can read both.
       - key: CREDENTIAL_ENCRYPTION_KEY
-        value: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: ASSISTANT_ALLOWED_ORIGINS

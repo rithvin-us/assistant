@@ -1071,3 +1071,68 @@ updates the same row instead of creating a second one. Queue entries carry an
 attempt count; an entry rejected with a 4xx is dead-lettered rather than
 retried forever, because a request the server has judged invalid will not become
 valid by being sent again.
+
+## ADR-0030 — The deployed image pins the workspace toolchain, and the blueprint carries no secret
+
+**Decision.** `Dockerfile` builds on a Rust image that satisfies the workspace's
+`rust-version`, and `render.yaml` declares every secret as `sync: false` rather
+than carrying a value.
+
+**Context.** The Render deploy never produced a running service. The builder
+stage was `rust:1.80-slim`, while the workspace root declares
+`edition = "2024"`, `resolver = "3"` and `rust-version = "1.90"`. Cargo 1.80.1
+cannot parse that manifest at all:
+
+```
+error: failed to parse manifest at `/w/Cargo.toml`
+Caused by:
+  feature `edition2024` is required
+```
+
+The failure is at manifest parse, before any crate is compiled, so no amount of
+environment configuration on Render could have made the deploy succeed.
+
+Two further problems were visible in the same files. `render.yaml` carried a
+literal `DEV_AUTH_TOKEN` and a literal 64-character hex
+`CREDENTIAL_ENCRYPTION_KEY`. The first is the bearer token for every protected
+route; the second is the AES-GCM key that ADR-0025 uses to encrypt Google
+refresh tokens at rest. Both were committed, so the encryption at rest was
+decorative: an attacker with the repository and the database has the plaintext.
+Separately, there was no `.dockerignore`, so a 143 MB `node_modules` tree was
+uploaded as build context on every deploy.
+
+**Options.**
+1. Relax the workspace to an older edition so `rust:1.80` can build it.
+2. Pin the builder image to the version the workspace already requires.
+3. Install a toolchain inside the image with `rustup` at build time.
+
+**Chosen approach: option 2**, with `.dockerignore` added and both secrets moved
+to `sync: false`.
+
+**Reason.** Option 1 inverts the dependency: the deployment target does not get
+to dictate the language edition the codebase is written in. Option 3 adds a
+network download and a second source of truth for the toolchain to every build,
+for no benefit over choosing the right base image. Option 2 makes the failure
+impossible to reintroduce silently — a workspace `rust-version` bump past the
+pinned image fails the build with the same clear message, in CI, rather than on
+Render.
+
+`rust-toolchain.toml` is deliberately still not copied into the image. It pins
+`channel = "stable"` and four Android targets for local mobile work; honouring
+it in the container would download a floating toolchain plus four unused
+standard libraries on every deploy.
+
+**Consequences.** The release profile is overridden for the container build
+only, via `CARGO_PROFILE_RELEASE_LTO=false` and
+`CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16`. The workspace profile's fat LTO and
+single codegen unit exist for the shipped mobile binary (ADR-0002) and are the
+usual cause of an out-of-memory build on a small hosted builder; the server
+binary does not need them. `cargo build` is `--locked`, so a deploy fails rather
+than resolving a dependency the lockfile does not name.
+
+Because `CREDENTIAL_ENCRYPTION_KEY` is no longer the committed value, any Google
+credential encrypted under the old key cannot be decrypted and the account must
+be reconnected. `DEV_AUTH_TOKEN` and `CREDENTIAL_ENCRYPTION_KEY` must now be set
+in the Render dashboard before the first deploy; the service will not start
+without the first, and will fall back to the development key with a warning
+without the second.
