@@ -6,6 +6,10 @@ working on a phone. Anything not verified is listed as not verified.
 
 Date: 2026-09-07. Baseline commit: `5c4ebff`.
 
+(Lint is clean across the whole app as of `a1a2cb7`, which fixed three
+pre-existing `react-hooks/set-state-in-effect` errors in the Milestone 5
+screens separately from this work.)
+
 ---
 
 ## 1. Automated verification — PASSED
@@ -17,7 +21,7 @@ Date: 2026-09-07. Baseline commit: `5c4ebff`.
 | `cargo test --workspace` | **237 passed, 0 failed** |
 | `pnpm --dir apps/mobile typecheck` | clean |
 | `pnpm --dir apps/mobile build` | succeeds |
-| `pnpm --dir apps/mobile lint` | no findings in any file this milestone touched |
+| `pnpm --dir apps/mobile lint` | clean, no findings |
 
 42 tests are new. What they actually prove:
 
