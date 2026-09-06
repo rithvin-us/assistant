@@ -50,14 +50,17 @@ pub struct Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateRequest {
     pub model: ModelId,
+    pub system_prompt: Option<String>,
     pub messages: Vec<Message>,
+    pub tools: Vec<assistant_tools::ToolSpec>,
     pub max_output_tokens: Option<u32>,
     pub temperature: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateResponse {
-    pub text: String,
+    pub text: Option<String>,
+    pub tool_calls: Vec<assistant_tools::ToolCall>,
     pub usage: Usage,
 }
 
@@ -71,6 +74,7 @@ pub struct Usage {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum StreamChunk {
     Text(String),
+    ToolCall(assistant_tools::ToolCall),
     Done(Usage),
 }
 

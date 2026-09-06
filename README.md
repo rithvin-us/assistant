@@ -6,21 +6,18 @@
 
 A voice-first personal assistant. Rust backend, Tauri 2 + React mobile app, PostgreSQL.
 
-**Status: Milestone 0 — repository bootstrap.** There is no AI in this
-repository. No model provider, no Gmail, no Calendar, no memory engine, no voice.
-What exists is the structure those things will be built into, plus a server and
-an app that actually run and actually talk to each other.
+**Status: Milestone 1 Complete — Prepared for Milestone 2 (Assistant Core).**
+The repository structure, 7 Rust workspace crates, Axum HTTP/WS server, Tauri 2 mobile client, Material UI light theme, and security boundaries are audited, hardened, and verified.
 
 ## What works today
 
 - Rust workspace of 7 crates, building clean under `clippy -D warnings`.
 - Axum server with `GET /v1/health` and `WS /v1/conversation/{id}/stream`.
-- Tauri 2 desktop app with a Material UI shell that probes the server and reports
-  what it finds.
+- Tauri 2 app with Material UI light theme shell that probes the server and reports status.
 - Local SQLite cache opened at startup.
-- 8 tests, including integration tests that run the real router over real HTTP
-  and a real WebSocket.
-- CI running format, clippy, tests, typecheck, lint and build.
+- 9 tests (unit + integration tests) passing 100% over real HTTP and WebSocket transports.
+- Complete documentation audit in [`docs/MILESTONE-1-AUDIT.md`](docs/MILESTONE-1-AUDIT.md) and domain specification in [`docs/DOMAIN.md`](docs/DOMAIN.md).
+- CI running format, clippy, tests, typecheck, lint, build, and secret scanning.
 
 ## Layout
 

@@ -108,6 +108,7 @@ dependencies = [
 name = "assistant-models"
 version = "0.1.0"
 dependencies = [
+ "assistant-tools",
  "async-trait",
  "futures",
  "serde",

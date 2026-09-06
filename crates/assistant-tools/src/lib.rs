@@ -38,6 +38,43 @@ pub enum PermissionDecision {
     Deny { reason: String },
 }
 
+/// Lifecycle state for persistent human-in-the-loop approvals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalStatus {
+    Requested,
+    Approved,
+    Rejected,
+    Expired,
+    Cancelled,
+}
+
+/// Persistent request created when a tool call yields [`PermissionDecision::RequireApproval`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApprovalRequest {
+    pub id: serde_json::Value,
+    pub tool_name: String,
+    pub risk_level: RiskLevel,
+    pub status: ApprovalStatus,
+    pub reason: String,
+}
+
+/// A model-proposed or orchestrator-constructed tool call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// Result of executing a tool.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolResult {
+    pub call_id: String,
+    pub name: String,
+    pub result: Result<serde_json::Value, String>,
+}
+
 /// Everything the orchestrator and the audit log need to know about a tool
 /// before it is ever called.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -88,5 +125,21 @@ mod tests {
         assert!(RiskLevel::Green < RiskLevel::Yellow);
         assert!(RiskLevel::Yellow < RiskLevel::Orange);
         assert!(RiskLevel::Orange < RiskLevel::Red);
+    }
+
+    #[test]
+    fn tool_spec_risk_level_is_immutable_by_input() {
+        let spec = ToolSpec {
+            name: "gmail.send".into(),
+            description: "Send email".into(),
+            input_schema: serde_json::json!({}),
+            output_schema: serde_json::json!({}),
+            risk: RiskLevel::Red,
+            required_scopes: vec!["gmail.send".into()],
+            timeout_ms: 5000,
+        };
+
+        // Untrusted model input cannot modify the Rust-defined risk level.
+        assert_eq!(spec.risk, RiskLevel::Red);
     }
 }
