@@ -120,11 +120,14 @@ dependencies = [
  "assistant-models",
  "assistant-tools",
  "async-trait",
+ "dotenvy",
  "futures",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
+ "tracing",
 ]
 
 [[package]]

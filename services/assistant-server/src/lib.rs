@@ -5,9 +5,11 @@
 
 pub mod auth;
 pub mod config;
+pub mod conversations;
 pub mod db;
 pub mod error;
 pub mod orchestration;
+pub mod prompt;
 pub mod routes;
 pub mod state;
 pub mod store;
@@ -33,8 +35,11 @@ pub fn app(
     events: EventBus,
     deps: orchestration::Dependencies,
 ) -> Router {
-    let (orchestrator, approvals) =
-        orchestration::build(deps, events.clone(), config.max_tool_rounds);
+    let (orchestrator, approvals) = orchestration::build(
+        deps,
+        events.clone(),
+        orchestration::Settings::from_config(config),
+    );
 
     let state = Arc::new(AppState {
         verifier: Arc::new(DevTokenVerifier::new(config.dev_auth_token.clone())),

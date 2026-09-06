@@ -37,3 +37,7 @@ tracing = { workspace = true, optional = true }
 # without forcing the feature on any dependent.
 assistant-models = { path = ".", features = ["mock", "anthropic"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }
+futures.workspace = true
+# The live smoke test reads ANTHROPIC_API_KEY from a local .env, the same file
+# the server reads. Tests only -- the provider itself reads no environment.
+dotenvy.workspace = true

@@ -7,9 +7,10 @@
 use std::sync::Arc;
 
 use assistant_core::{
-    AssistantStatusHandler, DeterministicRouter, EventBus, Orchestrator, OrchestratorConfig,
-    RiskBasedPolicy, ToolRegistry,
+    AssistantStatusHandler, ContextWindow, DeterministicRouter, EventBus, Orchestrator,
+    OrchestratorConfig, RiskBasedPolicy, StoredContextProvider, ToolRegistry,
     actions::{ActionStore, ApprovalCoordinator, ApprovalPolicy},
+    conversation::ConversationStore,
     turn::TurnEvent,
 };
 use assistant_models::{ModelId, ModelProvider};
@@ -37,6 +38,14 @@ pub struct Dependencies {
     pub store: Option<Arc<dyn ActionStore>>,
     /// How long a pending approval stays answerable.
     pub approval_policy: ApprovalPolicy,
+    /// Durable conversation history.
+    ///
+    /// `None` when no `DATABASE_URL` is configured. The assistant still
+    /// answers, but each turn starts with no memory of the last one -- which
+    /// `/v1/health` already reports as degraded. It is never substituted with
+    /// an in-process map, because a conversation that silently vanishes on
+    /// restart is worse than one that never claimed to persist.
+    pub conversations: Option<Arc<dyn ConversationStore>>,
 }
 
 impl Default for Dependencies {
@@ -46,6 +55,37 @@ impl Default for Dependencies {
             tools: Arc::new(ToolRegistry::new()),
             store: None,
             approval_policy: ApprovalPolicy::default(),
+            conversations: None,
+        }
+    }
+}
+
+/// Plain configuration the orchestrator needs, resolved from [`Config`].
+///
+/// A struct so the argument list does not grow every time a knob is added, and
+/// so a test can construct the whole thing without an environment.
+///
+/// [`Config`]: crate::config::Config
+#[derive(Debug, Clone)]
+pub struct Settings {
+    pub max_tool_rounds: usize,
+    pub model: String,
+    pub system_prompt: String,
+    pub context_window: ContextWindow,
+}
+
+impl Settings {
+    pub fn from_config(config: &crate::config::Config) -> Self {
+        Self {
+            max_tool_rounds: config.max_tool_rounds,
+            model: config.model.clone(),
+            // The prompt is a server constant. Nothing on the wire can reach
+            // it. See `crate::prompt`.
+            system_prompt: crate::prompt::SYSTEM_PROMPT.to_string(),
+            context_window: ContextWindow {
+                max_messages: config.context_max_messages,
+                ..ContextWindow::default()
+            },
         }
     }
 }
@@ -59,13 +99,14 @@ impl Default for Dependencies {
 pub fn build(
     deps: Dependencies,
     events: EventBus,
-    max_tool_rounds: usize,
+    settings: Settings,
 ) -> (Orchestrator, Option<Arc<ApprovalCoordinator>>) {
     let Dependencies {
         model,
         tools,
         store,
         approval_policy,
+        conversations,
     } = deps;
     let registry = tools;
 
@@ -78,19 +119,32 @@ pub fn build(
         ))),
     );
 
+    // The read path and the write path point at the same store: the context
+    // provider reads history, the orchestrator writes it.
+    let context = conversations.clone().map(|store| {
+        Arc::new(StoredContextProvider::new(store, settings.context_window))
+            as Arc<dyn assistant_core::ContextProvider>
+    });
+
     // Built first so the coordinator can borrow its executor.
-    let orchestrator = Orchestrator::builder()
+    let mut builder = Orchestrator::builder()
         .registry(registry)
         .policy(Arc::new(RiskBasedPolicy::new()))
         .router(router)
         .events(events.clone())
         .config(OrchestratorConfig {
-            max_tool_rounds,
-            model: ModelId("default".to_string()),
-            system_prompt: None,
+            max_tool_rounds: settings.max_tool_rounds,
+            model: ModelId(settings.model),
+            system_prompt: Some(settings.system_prompt),
         })
         .maybe_model(model)
-        .build();
+        .maybe_conversations(conversations);
+
+    if let Some(context) = context {
+        builder = builder.context(context);
+    }
+
+    let orchestrator = builder.build();
 
     let coordinator = store.map(|store| {
         Arc::new(ApprovalCoordinator::new(

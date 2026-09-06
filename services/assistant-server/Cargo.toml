@@ -9,7 +9,7 @@ license.workspace = true
 [dependencies]
 assistant-auth.workspace = true
 assistant-core.workspace = true
-assistant-models.workspace = true
+assistant-models = { workspace = true, features = ["anthropic"] }
 assistant-protocol.workspace = true
 assistant-tools.workspace = true
 
@@ -31,7 +31,7 @@ thiserror.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 
-dotenvy = "0.15"
+dotenvy.workspace = true
 futures.workspace = true
 tokio-util.workspace = true
 
@@ -41,4 +41,4 @@ assistant-core = { workspace = true, features = ["testing"] }
 assistant-models = { workspace = true, features = ["mock"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 tokio-tungstenite = "0.28"
-reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }
+reqwest = { workspace = true }

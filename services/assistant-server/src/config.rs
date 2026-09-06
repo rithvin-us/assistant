@@ -4,7 +4,9 @@
 //! single place to audit for secret handling. `Debug` is implemented by hand to
 //! keep secrets out of logs.
 
-use std::{fmt, net::SocketAddr, path::PathBuf};
+use std::{fmt, net::SocketAddr, path::PathBuf, time::Duration};
+
+use assistant_models::anthropic::{AnthropicConfig, Effort};
 
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
@@ -33,6 +35,24 @@ pub struct Config {
     /// The server owns this, not the core and certainly not the model: it is the
     /// only thing standing between a confused model and an unbounded spend.
     pub max_tool_rounds: usize,
+
+    /// The Anthropic credential.
+    ///
+    /// Server-only, and read here and nowhere else. `None` is a supported
+    /// deployment: the deterministic path still answers and a turn that needs a
+    /// model fails with `no_model_provider` rather than a fabricated reply.
+    pub anthropic_api_key: Option<String>,
+    /// Model identifier. Named once, here.
+    pub model: String,
+    pub model_max_output_tokens: u32,
+    pub model_timeout: Duration,
+    /// Reasoning effort. `None` omits the field entirely, for a model that does
+    /// not accept it.
+    pub model_effort: Option<Effort>,
+    /// How many past messages may be replayed to the model. The character bound
+    /// that accompanies it is a core default; this is the knob an operator has
+    /// a reason to turn.
+    pub context_max_messages: usize,
 }
 
 impl Config {
@@ -77,13 +97,63 @@ impl Config {
                     name: "ASSISTANT_MAX_TOOL_ROUNDS",
                     reason: format!("{e}"),
                 })?,
+
+            // Read, never printed. The only thing logged about it is whether it
+            // is present -- see `Debug` below and the startup log line.
+            anthropic_api_key: std::env::var("ANTHROPIC_API_KEY")
+                .ok()
+                .map(|key| key.trim().to_string())
+                .filter(|key| !key.is_empty()),
+            model: env_or("ASSISTANT_MODEL", AnthropicConfig::DEFAULT_MODEL),
+            model_max_output_tokens: parse_env("ASSISTANT_MODEL_MAX_OUTPUT_TOKENS", "4096")?,
+            model_timeout: Duration::from_millis(parse_env("ASSISTANT_MODEL_TIMEOUT_MS", "60000")?),
+            model_effort: {
+                let raw = env_or("ASSISTANT_MODEL_EFFORT", "low");
+                if raw.eq_ignore_ascii_case("none") {
+                    None
+                } else {
+                    Some(Effort::parse(&raw).ok_or(ConfigError::Invalid {
+                        name: "ASSISTANT_MODEL_EFFORT",
+                        reason: "expected one of low, medium, high, xhigh, max, none".into(),
+                    })?)
+                }
+            },
+            context_max_messages: parse_env("ASSISTANT_CONTEXT_MAX_MESSAGES", "40")?,
         })
+    }
+
+    /// Builds the provider configuration, when this deployment has a credential.
+    ///
+    /// Assembling it here keeps every environment read in one file: the
+    /// provider itself reads nothing.
+    pub fn anthropic(&self) -> Option<AnthropicConfig> {
+        let key = self.anthropic_api_key.as_ref()?;
+        Some(
+            AnthropicConfig::new(key)
+                .with_model(&self.model)
+                .with_max_output_tokens(self.model_max_output_tokens)
+                .with_timeout(self.model_timeout)
+                .with_effort(self.model_effort),
+        )
     }
 
     /// Path to the SQL migrations directory, relative to the workspace root.
     pub fn migrations_dir() -> PathBuf {
         PathBuf::from("migrations")
     }
+}
+
+fn parse_env<T>(name: &'static str, default: &str) -> Result<T, ConfigError>
+where
+    T: std::str::FromStr,
+    T::Err: fmt::Display,
+{
+    env_or(name, default)
+        .parse()
+        .map_err(|e| ConfigError::Invalid {
+            name,
+            reason: format!("{e}"),
+        })
 }
 
 fn env_or(name: &str, default: &str) -> String {
@@ -107,6 +177,17 @@ impl fmt::Debug for Config {
             .field("allowed_origins", &self.allowed_origins)
             .field("log_filter", &self.log_filter)
             .field("max_tool_rounds", &self.max_tool_rounds)
+            // Presence, never the value: whether a provider is configured is
+            // operationally important and is not itself a secret.
+            .field(
+                "anthropic_api_key",
+                &self.anthropic_api_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("model", &self.model)
+            .field("model_max_output_tokens", &self.model_max_output_tokens)
+            .field("model_timeout", &self.model_timeout)
+            .field("model_effort", &self.model_effort)
+            .field("context_max_messages", &self.context_max_messages)
             .finish()
     }
 }

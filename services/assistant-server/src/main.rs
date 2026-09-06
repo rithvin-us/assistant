@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use assistant_core::{DomainEvent, EventBus};
+use assistant_models::ModelProvider;
 use assistant_server::{app, config::Config, db};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
@@ -42,13 +43,11 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let events = EventBus::default();
-    // A default build wires no model provider and no tools. The deterministic
-    // path still answers, and a turn that needs a model fails with a clear
-    // `no_model_provider` rather than a fabricated reply. Real providers and
-    // tools arrive with the milestones that implement them.
-    // The durable action store exists only when a database does. Without one the
+
+    // The durable stores exist only when a database does. Without one the
     // server still runs: turns still stop at an approval, but the action is not
-    // persisted and the client is told so rather than handed an unusable id.
+    // persisted and the client is told so rather than handed an unusable id,
+    // and conversations do not survive a restart.
     let store = pool.clone().map(|pool| {
         Arc::new(assistant_server::store::PostgresActionStore::new(pool))
             as Arc<dyn assistant_core::actions::ActionStore>
@@ -57,12 +56,57 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("no durable action store; approvals cannot be resumed");
     }
 
+    let conversations = pool.clone().map(|pool| {
+        Arc::new(assistant_server::conversations::PostgresConversationStore::new(pool))
+            as Arc<dyn assistant_core::conversation::ConversationStore>
+    });
+    if conversations.is_none() {
+        tracing::warn!("no conversation store; the assistant will not remember anything");
+    }
+
+    // The provider is constructed only when a credential is configured. A
+    // deployment without one still answers on the deterministic path, and a
+    // turn that needs a model fails with a clear `no_model_provider` rather
+    // than a fabricated reply.
+    //
+    // Only the *presence* of the credential is logged, never any part of it.
+    let model = match config.anthropic() {
+        Some(provider_config) => {
+            match assistant_models::anthropic::AnthropicModelProvider::new(provider_config) {
+                Ok(provider) => {
+                    tracing::info!(
+                        provider = provider.name(),
+                        model = %config.model,
+                        "model provider configured"
+                    );
+                    Some(Arc::new(provider) as Arc<dyn assistant_models::ModelProvider>)
+                }
+                Err(error) => {
+                    tracing::error!(
+                        code = error.code(),
+                        "ANTHROPIC_API_KEY is set but the provider could not be built"
+                    );
+                    None
+                }
+            }
+        }
+        None => {
+            tracing::warn!("ANTHROPIC_API_KEY is not set; running without a model provider");
+            None
+        }
+    };
+
+    // Tools stay empty on purpose. Registering a placeholder would advertise a
+    // capability that does not exist; real tools arrive with the integration
+    // milestones that implement them.
     let router = app(
         &config,
         pool,
         events.clone(),
         assistant_server::orchestration::Dependencies {
+            model,
             store,
+            conversations,
             ..Default::default()
         },
     );

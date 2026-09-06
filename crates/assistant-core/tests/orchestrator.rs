@@ -7,8 +7,9 @@
 use std::sync::Arc;
 
 use assistant_core::{
-    AssistantStatusHandler, DeterministicRouter, EventBus, InMemoryContextProvider, Orchestrator,
-    OrchestratorConfig, RiskBasedPolicy, ToolRegistry,
+    AssistantStatusHandler, ContextWindow, DeterministicRouter, EventBus, InMemoryContextProvider,
+    MessageRole, Orchestrator, OrchestratorConfig, RiskBasedPolicy, StoredContextProvider,
+    ToolRegistry,
     testing::*,
     turn::{ExecutionMode, TurnEvent, TurnRequest},
 };
@@ -755,4 +756,343 @@ async fn tool_declarations_are_offered_to_the_model_when_tools_exist() {
         .map(|spec| spec.name.clone())
         .collect();
     assert_eq!(offered, vec!["gmail.send", "notes.read"]);
+}
+
+// ---------------------------------------------------------------------------
+// Conversation persistence
+// ---------------------------------------------------------------------------
+
+/// Builds an orchestrator whose read and write paths share one store, which is
+/// how the server wires it.
+fn with_conversations(
+    model: Option<Arc<dyn assistant_models::ModelProvider>>,
+    registry: Arc<ToolRegistry>,
+) -> (Arc<Orchestrator>, Arc<InMemoryConversationStore>) {
+    let store = Arc::new(InMemoryConversationStore::new());
+    let orchestrator = Orchestrator::builder()
+        .registry(registry)
+        .maybe_model(model)
+        .conversations(store.clone())
+        .context(Arc::new(StoredContextProvider::new(
+            store.clone(),
+            ContextWindow::default(),
+        )))
+        .router(Arc::new(DeterministicRouter::new().with(Arc::new(
+            AssistantStatusHandler::new(Some("mock".into()), Arc::new(ToolRegistry::new())),
+        ))))
+        .build();
+
+    (Arc::new(orchestrator), store)
+}
+
+fn transcript(store: &InMemoryConversationStore) -> Vec<(MessageRole, String)> {
+    store
+        .all()
+        .into_iter()
+        .map(|message| (message.role, message.content))
+        .collect()
+}
+
+#[tokio::test]
+async fn a_turn_persists_the_question_and_the_answer_in_that_order() {
+    let model = Arc::new(MockModelProvider::always("Hello, Alex."));
+    let (orchestrator, store) = with_conversations(Some(model), Arc::new(ToolRegistry::new()));
+
+    let request = request("hello");
+    let conversation_id = request.conversation_id;
+    let outcome = orchestrator
+        .clone()
+        .run(request, CancellationToken::new())
+        .await
+        .expect("answered");
+
+    assert_eq!(
+        transcript(&store),
+        vec![
+            (MessageRole::User, "hello".to_string()),
+            (MessageRole::Assistant, "Hello, Alex.".to_string()),
+        ]
+    );
+
+    // The stored answer carries the id the client saw on every delta.
+    let assistant = store
+        .all()
+        .into_iter()
+        .find(|message| message.role == MessageRole::Assistant)
+        .expect("an assistant message");
+    assert_eq!(assistant.id, outcome.message_id);
+    assert_eq!(assistant.conversation_id, conversation_id);
+}
+
+#[tokio::test]
+async fn the_second_turn_is_answered_with_the_first_turn_in_context() {
+    // The script is fixed, so what proves the point is not the answer but what
+    // the provider was handed on the second call.
+    let model = Arc::new(MockModelProvider::new(vec![
+        MockResponse::text("Noted."),
+        MockResponse::text("Your name is Alex."),
+    ]));
+    let (orchestrator, _store) =
+        with_conversations(Some(model.clone()), Arc::new(ToolRegistry::new()));
+
+    let conversation_id = Uuid::new_v4();
+    for text in ["My name is Alex.", "What is my name?"] {
+        orchestrator
+            .clone()
+            .run(
+                TurnRequest::new(conversation_id, dev_principal(), text),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("answered");
+    }
+
+    let second = &model.requests()[1];
+    let replayed: Vec<&str> = second
+        .messages
+        .iter()
+        .map(|message| message.content.as_str())
+        .collect();
+
+    assert_eq!(
+        replayed,
+        ["My name is Alex.", "Noted.", "What is my name?"],
+        "the second turn did not see the first"
+    );
+}
+
+#[tokio::test]
+async fn history_does_not_cross_between_conversations() {
+    let model = Arc::new(MockModelProvider::always("ok"));
+    let (orchestrator, _store) =
+        with_conversations(Some(model.clone()), Arc::new(ToolRegistry::new()));
+
+    for _ in 0..2 {
+        orchestrator
+            .clone()
+            .run(request("something"), CancellationToken::new())
+            .await
+            .expect("answered");
+    }
+
+    // Each turn used a fresh conversation id, so neither saw the other.
+    for sent in model.requests() {
+        assert_eq!(
+            sent.messages.len(),
+            1,
+            "history leaked between conversations: {:?}",
+            sent.messages
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_failed_turn_leaves_the_question_but_never_a_fabricated_answer() {
+    let model = Arc::new(MockModelProvider::new(vec![MockResponse::Error(
+        "overloaded".into(),
+    )]));
+    let (orchestrator, store) = with_conversations(Some(model), Arc::new(ToolRegistry::new()));
+
+    let events = collect(orchestrator, request("are the lights on")).await;
+    assert!(matches!(events.last(), Some(TurnEvent::Failed { .. })));
+
+    assert_eq!(
+        transcript(&store),
+        vec![(MessageRole::User, "are the lights on".to_string())],
+        "a failed turn wrote an assistant message"
+    );
+}
+
+#[tokio::test]
+async fn a_tool_round_is_persisted_with_real_roles_not_flattened_into_prose() {
+    let echo = Arc::new(EchoTool::green("notes.read"));
+    let model = Arc::new(MockModelProvider::new(vec![
+        MockResponse::TextWithToolCalls {
+            text: "Checking.".into(),
+            calls: vec![tool_call("call_1", "notes.read")],
+        },
+        MockResponse::text("Nothing there."),
+    ]));
+
+    let (orchestrator, store) =
+        with_conversations(Some(model), registry_of(vec![echo as Arc<dyn Tool>]));
+
+    orchestrator
+        .clone()
+        .run(request("read my notes"), CancellationToken::new())
+        .await
+        .expect("answered");
+
+    let stored = store.all();
+    let roles: Vec<MessageRole> = stored.iter().map(|message| message.role).collect();
+    assert_eq!(
+        roles,
+        [
+            MessageRole::User,
+            MessageRole::Assistant, // the turn that proposed the call
+            MessageRole::Tool,      // its result
+            MessageRole::Assistant, // the final answer
+        ]
+    );
+
+    let proposal = &stored[1];
+    assert_eq!(proposal.tool_calls.len(), 1);
+    assert_eq!(proposal.tool_calls[0].name, "notes.read");
+
+    let result = &stored[2];
+    assert_eq!(result.tool_call_id.as_deref(), Some("call_1"));
+    assert!(
+        !result.content.contains("Checking."),
+        "the tool result was flattened into assistant prose"
+    );
+}
+
+#[tokio::test]
+async fn a_stale_tool_result_is_stored_but_not_replayed_into_the_next_turn() {
+    let echo = Arc::new(EchoTool::green("notes.read"));
+    let model = Arc::new(MockModelProvider::new(vec![
+        MockResponse::TextWithToolCalls {
+            text: "Checking.".into(),
+            calls: vec![tool_call("call_1", "notes.read")],
+        },
+        MockResponse::text("Nothing there."),
+        MockResponse::text("Still nothing."),
+    ]));
+
+    let (orchestrator, _store) = with_conversations(
+        Some(model.clone()),
+        registry_of(vec![echo as Arc<dyn Tool>]),
+    );
+
+    let conversation_id = Uuid::new_v4();
+    for text in ["read my notes", "anything else"] {
+        orchestrator
+            .clone()
+            .run(
+                TurnRequest::new(conversation_id, dev_principal(), text),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("answered");
+    }
+
+    // The third provider call is the second turn's only pass.
+    let third = &model.requests()[2];
+    assert!(
+        third
+            .messages
+            .iter()
+            .all(|message| message.role != assistant_models::Role::Tool),
+        "a tool result from a finished turn was replayed as context"
+    );
+}
+
+#[tokio::test]
+async fn the_deterministic_fast_path_is_persisted_without_a_model_call() {
+    let model = Arc::new(MockModelProvider::always("should never be reached"));
+    let (orchestrator, store) =
+        with_conversations(Some(model.clone()), Arc::new(ToolRegistry::new()));
+
+    orchestrator
+        .clone()
+        .run(request("status"), CancellationToken::new())
+        .await
+        .expect("answered");
+
+    assert_eq!(model.calls(), 0, "the fast path reached the model");
+
+    let stored = transcript(&store);
+    assert_eq!(stored.len(), 2);
+    assert_eq!(stored[0].0, MessageRole::User);
+    assert_eq!(stored[1].0, MessageRole::Assistant);
+    assert!(stored[1].1.contains("Assistant core is running"));
+}
+
+#[tokio::test]
+async fn a_deployment_without_a_store_still_answers_and_simply_does_not_remember() {
+    let model = Arc::new(MockModelProvider::always("ok"));
+    let orchestrator = Arc::new(Orchestrator::builder().model(model.clone()).build());
+
+    let conversation_id = Uuid::new_v4();
+    for _ in 0..2 {
+        orchestrator
+            .clone()
+            .run(
+                TurnRequest::new(conversation_id, dev_principal(), "hello"),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("answered");
+    }
+
+    for sent in model.requests() {
+        assert_eq!(sent.messages.len(), 1, "history appeared from nowhere");
+    }
+}
+
+#[tokio::test]
+async fn context_is_bounded_so_a_long_conversation_cannot_become_an_expensive_one() {
+    let model = Arc::new(MockModelProvider::always("ok"));
+    let store = Arc::new(InMemoryConversationStore::new());
+    let orchestrator = Arc::new(
+        Orchestrator::builder()
+            .model(model.clone())
+            .conversations(store.clone())
+            .context(Arc::new(StoredContextProvider::new(
+                store.clone(),
+                ContextWindow {
+                    max_messages: 4,
+                    max_chars: 10_000,
+                },
+            )))
+            .build(),
+    );
+
+    let conversation_id = Uuid::new_v4();
+    for i in 0..6 {
+        orchestrator
+            .clone()
+            .run(
+                TurnRequest::new(conversation_id, dev_principal(), format!("turn {i}")),
+                CancellationToken::new(),
+            )
+            .await
+            .expect("answered");
+    }
+
+    // Four replayed history messages -- two exchanges -- plus the current turn.
+    // Turns 0 to 2 have fallen out of the window entirely.
+    let last = model.requests().pop().expect("a request");
+    assert_eq!(last.messages.len(), 5, "the window was not enforced");
+    assert_eq!(last.messages[0].content, "turn 3");
+    assert_eq!(last.messages[4].content, "turn 5");
+}
+
+#[tokio::test]
+async fn the_system_prompt_is_sent_once_and_only_from_configuration() {
+    let model = Arc::new(MockModelProvider::always("ok"));
+    let orchestrator = Arc::new(
+        Orchestrator::builder()
+            .model(model.clone())
+            .config(OrchestratorConfig {
+                system_prompt: Some("operator instructions".into()),
+                ..OrchestratorConfig::default()
+            })
+            .build(),
+    );
+
+    orchestrator
+        .clone()
+        .run(request("hello"), CancellationToken::new())
+        .await
+        .expect("answered");
+
+    let sent = model.requests().pop().expect("a request");
+    assert_eq!(sent.system_prompt.as_deref(), Some("operator instructions"));
+    assert!(
+        sent.messages
+            .iter()
+            .all(|message| message.role != assistant_models::Role::System),
+        "the system prompt was also pushed into the message list"
+    );
 }
