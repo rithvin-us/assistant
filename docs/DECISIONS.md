@@ -220,3 +220,43 @@ for a few lines. Real authentication is a later milestone with its own design.
 identity. It is not a security control, and a build using it must not be exposed
 beyond a trusted local network. Replacing it means implementing `TokenVerifier`
 once; no handler changes.
+
+---
+
+## ADR-0010 — The release workflow is kept, scoped down, and marked premature
+
+**Context.** `.github/workflows/release.yml` arrived during Milestone 1. It runs
+on `v*` tag pushes and `workflow_dispatch`, builds the server binary and Tauri
+bundles on three platforms, and creates a draft GitHub release via
+`tauri-apps/tauri-action`. The project has no tags and has never cut a release.
+
+**Options.**
+1. Delete it as scope that is not needed yet.
+2. Keep it as-is.
+3. Keep it, but reduce its privileges to the minimum it actually needs.
+
+**Chosen.** Option 3.
+
+**Reason.** It is genuinely premature -- nothing releases yet -- but deleting
+working infrastructure to satisfy a scope rule is a worse trade than leaving it
+dormant, and it costs nothing while no tag is pushed. What did need fixing was
+privilege: the workflow declared `contents: write` at the top level, so every
+job inherited a write-scoped `GITHUB_TOKEN` while running repository-controlled
+build code (`cargo build`, `pnpm install` lifecycle scripts, the Tauri build).
+Only the job that publishes a release needs that. `pnpm install` was also
+unpinned, so a release artefact would not have been reproducible from the
+committed lockfile.
+
+**Consequences.** Top-level permission is now `contents: read`; `contents: write`
+is re-granted only on the `build-tauri` job that creates the release. The
+frontend install uses `--frozen-lockfile`.
+
+Residual, accepted for now: the workflow still executes repository code, which is
+inherent to building anything. It is not reachable from a fork pull request --
+there is no `pull_request_target` trigger, and only accounts with write access
+can push a tag or dispatch a workflow. It also drifts from `ci.yml` (Node 20 vs
+24, `checkout@v4` vs `v5`, `pnpm/action-setup@v3` vs `v4`); that is cosmetic
+while no release is being cut and should be reconciled before the first real tag.
+
+Release infrastructure was deliberately kept out of the Assistant Core work: this
+change is a separate commit.

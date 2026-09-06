@@ -6,13 +6,18 @@ on:
       - 'v*'
   workflow_dispatch:
 
+# Least privilege by default. Only the job that actually creates a GitHub
+# release re-grants `contents: write`; every other job runs read-only even
+# though it executes repository-controlled build code.
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-server:
     name: Build Production Server Binary
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -76,10 +81,12 @@ jobs:
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
+      # --frozen-lockfile so a release artefact is built from exactly the
+      # dependency versions that were committed and reviewed.
       - name: Install Frontend Dependencies
         run: |
           cd apps/mobile
-          pnpm install
+          pnpm install --frozen-lockfile
 
       - name: Build Tauri App & Publish Release
         uses: tauri-apps/tauri-action@v0.5
