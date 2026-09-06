@@ -211,3 +211,123 @@ impl Tool for TracingTool {
         Ok(serde_json::json!({"ok": true}))
     }
 }
+
+/// An in-memory [`ConversationStore`](crate::conversation::ConversationStore).
+///
+/// Exists so the orchestrator's persistence behaviour -- what is written, in
+/// what order, and what is *not* written when a turn fails -- can be asserted
+/// without a database, and so the server's WebSocket tests can prove the
+/// end-to-end path without one either.
+///
+/// It is not a substitute for the Postgres tests. Ownership scoping, ordering
+/// under concurrent writes and survival across a restart are properties of the
+/// database, and are tested against a real one.
+#[derive(Debug, Default)]
+pub struct InMemoryConversationStore {
+    state: std::sync::Mutex<InMemoryState>,
+}
+
+#[derive(Debug, Default)]
+struct InMemoryState {
+    conversations: std::collections::HashMap<uuid::Uuid, crate::conversation::Conversation>,
+    messages: Vec<crate::conversation::StoredMessage>,
+    next_seq: i64,
+}
+
+impl InMemoryConversationStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Every message written, in insertion order.
+    pub fn all(&self) -> Vec<crate::conversation::StoredMessage> {
+        self.state.lock().expect("not poisoned").messages.clone()
+    }
+}
+
+#[async_trait]
+impl crate::conversation::ConversationStore for InMemoryConversationStore {
+    async fn ensure(
+        &self,
+        id: uuid::Uuid,
+        principal_id: uuid::Uuid,
+    ) -> Result<crate::conversation::Conversation, crate::conversation::ConversationError> {
+        let mut state = self.state.lock().expect("not poisoned");
+        if let Some(existing) = state.conversations.get(&id) {
+            // An id that exists under another owner is reported as missing,
+            // exactly as the Postgres implementation must.
+            if existing.principal_id != principal_id {
+                return Err(crate::conversation::ConversationError::NotFound(id));
+            }
+            return Ok(existing.clone());
+        }
+
+        let now = time::OffsetDateTime::now_utc();
+        let conversation = crate::conversation::Conversation {
+            id,
+            principal_id,
+            title: None,
+            created_at: now,
+            updated_at: now,
+        };
+        state.conversations.insert(id, conversation.clone());
+        Ok(conversation)
+    }
+
+    async fn append(
+        &self,
+        message: &crate::conversation::NewMessage,
+    ) -> Result<crate::conversation::StoredMessage, crate::conversation::ConversationError> {
+        let mut state = self.state.lock().expect("not poisoned");
+        match state.conversations.get(&message.conversation_id) {
+            Some(conversation) if conversation.principal_id == message.principal_id => {}
+            _ => {
+                return Err(crate::conversation::ConversationError::NotFound(
+                    message.conversation_id,
+                ));
+            }
+        }
+
+        state.next_seq += 1;
+        let stored = crate::conversation::StoredMessage {
+            id: message.id,
+            conversation_id: message.conversation_id,
+            turn_id: message.turn_id,
+            role: message.role,
+            content: message.content.clone(),
+            tool_calls: message.tool_calls.clone(),
+            tool_call_id: message.tool_call_id.clone(),
+            seq: state.next_seq,
+            created_at: time::OffsetDateTime::now_utc(),
+        };
+        state.messages.push(stored.clone());
+        Ok(stored)
+    }
+
+    async fn history(
+        &self,
+        id: uuid::Uuid,
+        principal_id: uuid::Uuid,
+        limit: usize,
+    ) -> Result<Vec<crate::conversation::StoredMessage>, crate::conversation::ConversationError>
+    {
+        let state = self.state.lock().expect("not poisoned");
+        let owned = state
+            .conversations
+            .get(&id)
+            .is_some_and(|conversation| conversation.principal_id == principal_id);
+        if !owned {
+            return Ok(Vec::new());
+        }
+
+        let mut messages: Vec<_> = state
+            .messages
+            .iter()
+            .filter(|message| message.conversation_id == id)
+            .cloned()
+            .collect();
+        messages.sort_by_key(|message| message.seq);
+        let start = messages.len().saturating_sub(limit);
+        Ok(messages.split_off(start))
+    }
+}

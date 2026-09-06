@@ -1,6 +1,6 @@
 [package]
 name = "assistant-models"
-description = "Provider-agnostic model abstraction. Contains no provider implementations."
+description = "Provider-agnostic model abstraction, plus provider implementations behind features."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -10,6 +10,10 @@ license.workspace = true
 # Deterministic in-process provider used by tests and by nothing else. Off by
 # default, so no release binary links it.
 mock = []
+# The Anthropic Messages API provider. Off by default so a build that does not
+# use it does not link reqwest, and so `assistant-core` can never depend on it
+# transitively. See docs/DECISIONS.md ADR-0018.
+anthropic = ["dep:reqwest", "dep:tokio", "dep:tracing"]
 
 [dependencies]
 assistant-tools = { workspace = true }
@@ -19,10 +23,17 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
+# Provider-only. `optional` keeps them out of a build that enables no provider.
+reqwest = { workspace = true, features = ["stream"], optional = true }
+tokio = { workspace = true, features = ["time"], optional = true }
+tracing = { workspace = true, optional = true }
+
 [dev-dependencies]
 # A self dev-dependency turns `mock` on for this package's own test build only.
 # Without it the mock tests compile away to nothing under
 # `cargo test -p assistant-models`, and only ran at all because another crate's
 # dev-dependency happened to unify the feature during a workspace build.
-assistant-models = { path = ".", features = ["mock"] }
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# `anthropic` is enabled the same way, so the provider tests compile here
+# without forcing the feature on any dependent.
+assistant-models = { path = ".", features = ["mock", "anthropic"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net", "io-util", "time"] }

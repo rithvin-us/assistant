@@ -16,9 +16,12 @@ pub enum CoreError {
     #[error("could not assemble context for this turn")]
     ContextError(#[source] Box<dyn std::error::Error + Send + Sync>),
 
-    /// The provider failed. The provider's own error is preserved as the source
-    /// for logging; the `Display` here says nothing about which vendor it was.
-    #[error("the language model could not complete this turn")]
+    /// The provider failed.
+    ///
+    /// `Display` is the provider error's own user-safe text, which names no
+    /// vendor and quotes nothing the provider returned. The detail -- status
+    /// codes, provider messages -- stays in the `#[source]` chain for the log.
+    #[error("{}", .0.user_message())]
     ModelError(#[source] assistant_models::ModelError),
 
     /// No provider was injected. Distinct from `ModelError`: this is a
@@ -75,7 +78,10 @@ impl CoreError {
         match self {
             Self::InvalidInput => "invalid_input",
             Self::ContextError(_) => "context_error",
-            Self::ModelError(_) => "model_error",
+            // Delegated, so a client can tell "rate limited, try again" from
+            // "this deployment is misconfigured" without the transport learning
+            // the provider's error taxonomy.
+            Self::ModelError(error) => error.code(),
             Self::NoModelProvider => "no_model_provider",
             Self::UnknownTool(_) => "unknown_tool",
             Self::ToolValidationError { .. } => "tool_validation_error",

@@ -136,7 +136,10 @@ async fn a_model_failure_becomes_a_structured_failed_event() {
 
     match last {
         TurnEvent::Failed { code, message, .. } => {
-            assert_eq!(*code, "model_error");
+            // The code comes from the provider error's own taxonomy, so a
+            // client can distinguish "busy, try again" from "misconfigured"
+            // without the transport learning that taxonomy.
+            assert_eq!(*code, "provider_error");
             assert!(
                 !message.contains("sk-secret"),
                 "provider detail leaked to the client: {message}"

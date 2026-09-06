@@ -19,6 +19,7 @@
 
 pub mod actions;
 pub mod context;
+pub mod conversation;
 pub mod deterministic;
 pub mod error;
 pub mod event;
@@ -35,6 +36,10 @@ pub use actions::{
     ActionStore, ApprovalPolicy, ApprovalRequest, AuditEvent, ExecutionStatus, ToolExecution,
 };
 pub use context::{ContextProvider, EmptyContextProvider, InMemoryContextProvider};
+pub use conversation::{
+    ContextWindow, Conversation, ConversationError, ConversationStore, MessageRole, NewMessage,
+    StoredContextProvider, StoredMessage,
+};
 pub use deterministic::{AssistantStatusHandler, DeterministicHandler, DeterministicRouter};
 pub use error::CoreError;
 pub use event::{DomainEvent, EventBus, EventEnvelope};

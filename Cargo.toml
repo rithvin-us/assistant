@@ -33,6 +33,9 @@ tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "signal", "
 tokio-util = { version = "0.7", default-features = false }
 axum = { version = "0.8", features = ["ws"] }
 tower = "0.5"
+# The project's HTTP client. Declared once here so the server, the model
+# provider and the Tauri shell cannot drift onto different versions.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "webpki-roots"] }
 tower-http = { version = "0.7", features = ["trace", "cors", "limit"] }
 
 # Serialization and domain primitives.

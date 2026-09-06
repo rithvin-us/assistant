@@ -37,6 +37,7 @@ use crate::{
     CoreError,
     actions::{ApprovalCoordinator, summarize},
     context::{ContextProvider, EmptyContextProvider},
+    conversation::{ConversationStore, NewMessage},
     deterministic::{DeterministicHandler, DeterministicRouter},
     event::{DomainEvent, EventBus},
     executor::ToolExecutor,
@@ -96,6 +97,10 @@ pub struct Orchestrator {
     /// resumed -- the honest degraded behaviour, reported to the client.
     approvals: Option<Arc<ApprovalCoordinator>>,
     context: Arc<dyn ContextProvider>,
+    /// Durable conversation history. `None` without a store, in which case the
+    /// assistant answers each turn with no memory of the last one -- reported
+    /// honestly rather than faked with an in-process map.
+    conversations: Option<Arc<dyn ConversationStore>>,
     router: Arc<DeterministicRouter>,
     events: Option<EventBus>,
     config: OrchestratorConfig,
@@ -241,11 +246,21 @@ impl Orchestrator {
         let input = normalize(&request.input)?;
         tracing::debug!(input_chars = input.text.len(), "turn normalised");
 
+        // Resolve the conversation before anything reads or writes it. An id
+        // that belongs to another principal fails here, indistinguishably from
+        // one that does not exist.
+        self.ensure_conversation(&request).await?;
+
         let context = self
             .context
             .assemble(&request)
             .await
             .map_err(CoreError::ContextError)?;
+
+        // Written after the history read rather than before it. The current
+        // turn reaches the model from `input`; if it were also in the history
+        // the provider was handed, it would be sent twice.
+        self.record_user(&request, &input).await?;
 
         let (plan, handler) = self.plan(&input);
         let span = tracing::Span::current();
@@ -277,6 +292,15 @@ impl Orchestrator {
                 self.run_model(&request, &input, &context, plan.mode, cancel, sink)
                     .await
             }
+        };
+
+        // Persisted before the turn is reported complete, so a turn a client
+        // saw finish is a turn the next one can see. A failed turn writes no
+        // assistant message at all: an answer that was never delivered must not
+        // appear in history as though it had been.
+        let result = match result {
+            Ok(outcome) => self.record_assistant(&request, outcome).await,
+            Err(error) => Err(error),
         };
 
         match &result {
@@ -344,7 +368,7 @@ impl Orchestrator {
             return Err(CoreError::NoModelProvider);
         }
 
-        let mut messages = build_messages(&self.config, context, input);
+        let mut messages = build_messages(context, input);
         let tools = match mode {
             ExecutionMode::ModelWithTools => self.executor.registry().declarations(),
             _ => Vec::new(),
@@ -401,6 +425,9 @@ impl Orchestrator {
                 )
                 .await?;
 
+            self.record_tool_round(request, &text, &calls, &results)
+                .await?;
+
             messages.push(Message::assistant_tool_calls(text, calls));
             for result in &results {
                 messages.push(Message::tool_result(
@@ -445,10 +472,16 @@ impl Orchestrator {
             temperature: None,
         };
 
+        // Latency is a product requirement, so it is measured rather than
+        // assumed. Only durations and counts are recorded -- never the prompt,
+        // the answer, or any part of either.
+        let started = std::time::Instant::now();
         let mut stream = model.stream(request).await.map_err(CoreError::ModelError)?;
+        let opened_ms = started.elapsed().as_millis();
 
         let mut text = String::new();
         let mut calls = Vec::new();
+        let mut first_token_ms: Option<u128> = None;
 
         loop {
             let next = tokio::select! {
@@ -461,6 +494,7 @@ impl Orchestrator {
 
             match chunk.map_err(CoreError::ModelError)? {
                 StreamChunk::Text(part) => {
+                    first_token_ms.get_or_insert_with(|| started.elapsed().as_millis());
                     text.push_str(&part);
                     sink.emit(TurnEvent::AssistantDelta {
                         message_id,
@@ -471,8 +505,13 @@ impl Orchestrator {
                 StreamChunk::ToolCall(call) => calls.push(call),
                 StreamChunk::Done(usage) => {
                     tracing::debug!(
+                        provider = model.name(),
+                        model = %self.config.model.0,
                         input_tokens = usage.input_tokens,
                         output_tokens = usage.output_tokens,
+                        stream_opened_ms = opened_ms,
+                        first_token_ms = first_token_ms.unwrap_or_default(),
+                        total_ms = started.elapsed().as_millis(),
                         "model pass finished"
                     );
                     break;
@@ -637,11 +676,121 @@ impl Orchestrator {
         Ok(results)
     }
 
+    /// Creates the conversation if this is the first turn in it.
+    ///
+    /// A no-op without a store: a deployment with no database still answers,
+    /// it simply does not remember.
+    async fn ensure_conversation(&self, request: &TurnRequest) -> Result<(), CoreError> {
+        let Some(store) = &self.conversations else {
+            return Ok(());
+        };
+        store
+            .ensure(request.conversation_id, request.principal.user_id)
+            .await
+            .map_err(conversation_error)?;
+        Ok(())
+    }
+
+    async fn record_user(
+        &self,
+        request: &TurnRequest,
+        input: &NormalizedInput,
+    ) -> Result<(), CoreError> {
+        self.record(NewMessage::user(
+            request.conversation_id,
+            request.principal.user_id,
+            request.turn_id,
+            input.text.clone(),
+        ))
+        .await
+    }
+
+    /// Persists the final answer and returns the outcome unchanged.
+    ///
+    /// The stored message carries the same id the client saw on every delta, so
+    /// a reconnecting client can tell whether the message it was streaming is
+    /// the one in history.
+    async fn record_assistant(
+        &self,
+        request: &TurnRequest,
+        outcome: TurnOutcome,
+    ) -> Result<TurnOutcome, CoreError> {
+        if outcome.text.trim().is_empty() {
+            return Ok(outcome);
+        }
+
+        self.record(
+            NewMessage::assistant(
+                request.conversation_id,
+                request.principal.user_id,
+                request.turn_id,
+                outcome.text.clone(),
+            )
+            .with_id(outcome.message_id),
+        )
+        .await?;
+
+        Ok(outcome)
+    }
+
+    /// Persists one round of tool use: what the model asked for, then what came
+    /// back. Written as their own roles, never flattened into assistant prose.
+    async fn record_tool_round(
+        &self,
+        request: &TurnRequest,
+        text: &str,
+        calls: &[ToolCall],
+        results: &[ToolResult],
+    ) -> Result<(), CoreError> {
+        if self.conversations.is_none() {
+            return Ok(());
+        }
+
+        self.record(
+            NewMessage::assistant(
+                request.conversation_id,
+                request.principal.user_id,
+                request.turn_id,
+                text.to_string(),
+            )
+            .with_tool_calls(calls.to_vec()),
+        )
+        .await?;
+
+        for result in results {
+            self.record(NewMessage::tool(
+                request.conversation_id,
+                request.principal.user_id,
+                request.turn_id,
+                result.call_id.clone(),
+                render_tool_result(result),
+            ))
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    async fn record(&self, message: NewMessage) -> Result<(), CoreError> {
+        let Some(store) = &self.conversations else {
+            return Ok(());
+        };
+        store.append(&message).await.map_err(conversation_error)?;
+        Ok(())
+    }
+
     fn publish(&self, event: DomainEvent) {
         if let Some(bus) = &self.events {
             bus.publish(event);
         }
     }
+}
+
+/// The conversation store is a context source, so its failures are reported as
+/// context failures rather than as a new error class the transport would have
+/// to learn about.
+fn conversation_error(error: crate::conversation::ConversationError) -> CoreError {
+    CoreError::ContextError(Box::new(error))
 }
 
 impl std::fmt::Debug for Orchestrator {
@@ -659,17 +808,12 @@ impl std::fmt::Debug for Orchestrator {
 ///
 /// History is replayed oldest-first and the current user turn goes last, which
 /// is the ordering every provider expects.
-fn build_messages(
-    config: &OrchestratorConfig,
-    context: &TurnContext,
-    input: &NormalizedInput,
-) -> Vec<Message> {
+fn build_messages(context: &TurnContext, input: &NormalizedInput) -> Vec<Message> {
     let mut messages = Vec::with_capacity(context.history.len() + 2);
 
-    if let Some(prompt) = &config.system_prompt {
-        messages.push(Message::system(prompt.clone()));
-    }
-
+    // The system prompt is *not* pushed here. It travels in
+    // `GenerateRequest::system_prompt`, which is where a provider expects it;
+    // putting it in both places sent it twice.
     if !context.facts.is_empty() {
         messages.push(Message::system(format!(
             "Relevant context:\n{}",
@@ -709,6 +853,7 @@ pub struct OrchestratorBuilder {
     registry: Option<Arc<ToolRegistry>>,
     policy: Option<Arc<dyn PermissionPolicy>>,
     context: Option<Arc<dyn ContextProvider>>,
+    conversations: Option<Arc<dyn ConversationStore>>,
     router: Option<Arc<DeterministicRouter>>,
     events: Option<EventBus>,
     approvals: Option<Arc<ApprovalCoordinator>>,
@@ -743,6 +888,23 @@ impl OrchestratorBuilder {
 
     pub fn context(mut self, context: Arc<dyn ContextProvider>) -> Self {
         self.context = Some(context);
+        self
+    }
+
+    /// Supplies the durable conversation store.
+    ///
+    /// Separate from [`Self::context`] on purpose: the context provider reads,
+    /// and this writes. A deployment normally points both at the same store.
+    pub fn conversations(mut self, conversations: Arc<dyn ConversationStore>) -> Self {
+        self.conversations = Some(conversations);
+        self
+    }
+
+    pub fn maybe_conversations(
+        mut self,
+        conversations: Option<Arc<dyn ConversationStore>>,
+    ) -> Self {
+        self.conversations = conversations;
         self
     }
 
@@ -788,6 +950,7 @@ impl OrchestratorBuilder {
             context: self
                 .context
                 .unwrap_or_else(|| Arc::new(EmptyContextProvider)),
+            conversations: self.conversations,
             router: self
                 .router
                 .unwrap_or_else(|| Arc::new(DeterministicRouter::new())),

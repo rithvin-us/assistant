@@ -1,14 +1,16 @@
 //! The seam between the assistant and whatever produces tokens.
 //!
-//! Nothing in this crate names Claude, Gemini or any other vendor. Provider
-//! implementations will live in sibling modules behind cargo features so that
-//! `assistant-core` never links a provider it does not use. See
-//! docs/DECISIONS.md ADR-0003.
+//! The vocabulary in this module names no vendor. Provider implementations live
+//! in sibling modules behind cargo features, so `assistant-core` -- which
+//! depends on this crate with no features -- never links a provider, and never
+//! sees a provider-specific type. See docs/DECISIONS.md ADR-0003 and ADR-0018.
 
+#[cfg(feature = "anthropic")]
+pub mod anthropic;
 #[cfg(feature = "mock")]
 pub mod mock;
 
-use std::pin::Pin;
+use std::{pin::Pin, time::Duration};
 
 use async_trait::async_trait;
 use futures::Stream;
@@ -141,14 +143,123 @@ pub enum StreamChunk {
     Done(Usage),
 }
 
+/// What went wrong at the provider boundary.
+///
+/// Two rules govern this type, and they are the reason it is an enum rather
+/// than a string.
+///
+/// * **`Display` is for logs, not for users.** Several variants carry provider
+///   detail so a failure can be diagnosed; that detail reaches the log through
+///   the error source chain and never reaches the wire. What the user is told
+///   comes from [`ModelError::user_message`], which names no vendor and quotes
+///   nothing the provider said.
+/// * **`code` is stable.** The transport maps a failure onto a wire frame from
+///   this discriminant, so adding a variant without adding a code is a compile
+///   error.
+///
+/// Nothing here ever carries an API key or a request header: the provider
+/// constructs these from a status line and a parsed error body, never from the
+/// request it sent.
 #[derive(Debug, thiserror::Error)]
 pub enum ModelError {
     #[error("provider does not support {0:?}")]
     UnsupportedCapability(Capability),
+
+    /// Credentials were missing, malformed or rejected.
+    #[error("provider rejected the credentials")]
+    AuthFailed,
+
+    /// The deployment is being throttled. `retry_after` is the provider's own
+    /// advice, when it gave any; the core does not act on it automatically.
+    #[error("provider is rate limiting this deployment")]
+    RateLimited { retry_after: Option<Duration> },
+
+    /// No response, or no further bytes, within the configured window.
+    #[error("provider did not respond within the configured timeout")]
+    Timeout,
+
+    /// The request this build constructed was not acceptable. Almost always a
+    /// bug here rather than a user problem, so the detail matters in the log.
+    #[error("provider rejected the request: {0}")]
+    InvalidRequest(String),
+
+    /// The provider is down, overloaded, or unreachable.
+    #[error("provider is unavailable: {0}")]
+    Unavailable(String),
+
+    /// A response arrived that this build cannot read. Distinct from
+    /// `InvalidRequest`: the request was fine and the answer was not.
+    #[error("provider returned a response this build cannot parse: {0}")]
+    MalformedResponse(String),
+
+    /// The provider's safety systems declined to answer. Not a fault, and not
+    /// something a retry fixes.
+    #[error("provider declined to answer{}", match .category {
+        Some(category) => format!(" ({category})"),
+        None => String::new(),
+    })]
+    Refused { category: Option<String> },
+
     #[error("request rejected by provider: {0}")]
     Rejected(String),
+
     #[error("provider transport failure: {0}")]
     Transport(String),
+}
+
+impl ModelError {
+    /// Stable discriminant for the wire and for metrics.
+    pub fn code(&self) -> &'static str {
+        match self {
+            Self::UnsupportedCapability(_) => "provider_unsupported_capability",
+            Self::AuthFailed => "provider_auth_failed",
+            Self::RateLimited { .. } => "provider_rate_limited",
+            Self::Timeout => "provider_timeout",
+            Self::InvalidRequest(_) => "provider_invalid_request",
+            Self::Unavailable(_) => "provider_unavailable",
+            Self::MalformedResponse(_) => "provider_error",
+            Self::Refused { .. } => "provider_refused",
+            Self::Rejected(_) => "provider_error",
+            Self::Transport(_) => "provider_unavailable",
+        }
+    }
+
+    /// Text that is safe to show a user.
+    ///
+    /// Deliberately quotes nothing the provider returned and names no vendor: a
+    /// provider error body is untrusted text that could contain anything,
+    /// including account identifiers.
+    pub fn user_message(&self) -> &'static str {
+        match self {
+            Self::UnsupportedCapability(_) => {
+                "The configured language model cannot do what this turn needs."
+            }
+            Self::AuthFailed => {
+                "The assistant is not configured correctly and could not reach its language model."
+            }
+            Self::RateLimited { .. } => "The assistant is busy right now. Try again in a moment.",
+            Self::Timeout => "The assistant took too long to answer. Try again.",
+            Self::InvalidRequest(_) | Self::MalformedResponse(_) | Self::Rejected(_) => {
+                "The assistant could not complete that turn."
+            }
+            Self::Unavailable(_) | Self::Transport(_) => {
+                "The assistant could not reach its language model. Try again."
+            }
+            Self::Refused { .. } => "The assistant declined to answer that.",
+        }
+    }
+
+    /// Whether retrying the identical request could plausibly succeed.
+    ///
+    /// Used only by a provider's own bounded transport retry. Nothing above the
+    /// provider retries a model call, because a turn may already have run tools
+    /// by the time it fails.
+    pub fn is_transient(&self) -> bool {
+        matches!(
+            self,
+            Self::Timeout | Self::Unavailable(_) | Self::Transport(_)
+        )
+    }
 }
 
 pub type ChunkStream = Pin<Box<dyn Stream<Item = Result<StreamChunk, ModelError>> + Send>>;
