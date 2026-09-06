@@ -20,4 +20,9 @@ serde_json.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+# A self dev-dependency turns `mock` on for this package's own test build only.
+# Without it the mock tests compile away to nothing under
+# `cargo test -p assistant-models`, and only ran at all because another crate's
+# dev-dependency happened to unify the feature during a workspace build.
+assistant-models = { path = ".", features = ["mock"] }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
