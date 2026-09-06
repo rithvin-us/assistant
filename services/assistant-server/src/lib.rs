@@ -16,7 +16,7 @@ pub mod store;
 
 use std::sync::Arc;
 
-use assistant_auth::DevTokenVerifier;
+use assistant_auth::{DevTokenVerifier, SupabaseJwtVerifier, TokenVerifier};
 use assistant_core::EventBus;
 use axum::{Router, extract::Request, http::HeaderValue};
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
@@ -46,8 +46,21 @@ pub fn app(
         .build()
         .unwrap_or_default();
 
+    // Real authentication when a Supabase project is configured, and the
+    // development placeholder only when one is not. Selecting it takes a
+    // deliberate omission rather than being the silent default (ADR-0024).
+    let verifier: Arc<dyn TokenVerifier> = match config.supabase_project_ref.as_deref() {
+        Some(project_ref) => Arc::new(SupabaseJwtVerifier::for_project(project_ref, http.clone())),
+        None => {
+            tracing::warn!(
+                "SUPABASE_PROJECT_REF is unset; falling back to the development                  bearer token, which authenticates every caller as one fixed user"
+            );
+            Arc::new(DevTokenVerifier::new(config.dev_auth_token.clone()))
+        }
+    };
+
     let state = Arc::new(AppState {
-        verifier: Arc::new(DevTokenVerifier::new(config.dev_auth_token.clone())),
+        verifier,
         events,
         orchestrator: Arc::new(orchestrator),
         approvals,

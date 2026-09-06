@@ -53,6 +53,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 thiserror = "2"
 anyhow = "1"
 
+# Authentication. ES256 JWT verification against the Supabase JWKS; see ADR-0024.
+# `jsonwebtoken` is used for signature and claim validation only -- the key set
+# itself is fetched with the project's one HTTP client, `reqwest`.
+jsonwebtoken = { version = "9", default-features = false, features = ["use_pem"] }
+
 # Misc.
 async-trait = "0.1"
 futures = "0.3"

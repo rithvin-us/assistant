@@ -18,14 +18,8 @@ import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Typography from "@mui/material/Typography";
-import LightbulbOutlinedIcon from "@mui/icons-material/LightbulbOutlined";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
-import AlarmRoundedIcon from "@mui/icons-material/AlarmRounded";
 import ChecklistRoundedIcon from "@mui/icons-material/ChecklistRounded";
-import PsychologyRoundedIcon from "@mui/icons-material/PsychologyRounded";
-import EventRoundedIcon from "@mui/icons-material/EventRounded";
-import LinkRoundedIcon from "@mui/icons-material/LinkRounded";
-import SettingsRoundedIcon from "@mui/icons-material/SettingsRounded";
 
 import type { ConnectionState } from "../api/bridge";
 import type { ScreenType } from "../App";
@@ -43,37 +37,19 @@ export default function MoreSheet({
 }) {
   const FEATURES = [
     {
-      icon: <ChecklistRoundedIcon color="primary" />,
+      icon: <ChecklistRoundedIcon sx={{ color: "#DC4C3E" }} />,
       label: "Tasks",
       note: "Standalone task management & priorities",
       enabled: true,
       screen: "tasks" as ScreenType,
     },
     {
-      icon: <AlarmRoundedIcon color="primary" />,
-      label: "Reminders",
-      note: "Scheduled reminders & notifications",
-      enabled: true,
-      screen: "reminders" as ScreenType,
-    },
-    {
-      icon: <DescriptionOutlinedIcon color="primary" />,
+      icon: <DescriptionOutlinedIcon sx={{ color: "#2563EB" }} />,
       label: "Notes",
       note: "Auto-saving notes & tags",
       enabled: true,
       screen: "notes" as ScreenType,
     },
-    {
-      icon: <LightbulbOutlinedIcon color="primary" />,
-      label: "Ideas",
-      note: "Capture & convert ideas to tasks",
-      enabled: true,
-      screen: "ideas" as ScreenType,
-    },
-    { icon: <EventRoundedIcon />, label: "Calendar", note: "schedule milestone", enabled: false },
-    { icon: <PsychologyRoundedIcon />, label: "Memory", note: "memory milestone", enabled: false },
-    { icon: <LinkRoundedIcon />, label: "Connections", note: "integrations milestone", enabled: false },
-    { icon: <SettingsRoundedIcon />, label: "Settings", note: "not built yet", enabled: false },
   ];
 
   return (

@@ -12,5 +12,14 @@ serde.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 
+# Supabase JWT verification (ADR-0024). `jsonwebtoken` validates the signature
+# and claims; `reqwest` fetches the public key set; `tokio` supplies the lock
+# and the clock the cache needs.
+jsonwebtoken.workspace = true
+reqwest.workspace = true
+tokio = { workspace = true, features = ["sync", "time"] }
+tracing.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt"] }
+serde_json.workspace = true

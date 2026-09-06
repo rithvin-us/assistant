@@ -1,10 +1,11 @@
 /**
- * Standalone Tasks Page — Todoist Authentic Design.
+ * Standalone Tasks Page — Todoist Authentic Light Design.
  *
  * Matches the official Todoist Android interface:
+ * - Clean white-first canvas (#FFFFFF) with warm near-black typography (#202020)
  * - Top header with "Inbox" / view title and options
  * - Priority stroke circles (P1 Red, P2 Orange, P3 Blue, P4 Grey)
- * - Red date pills beneath task titles (e.g. Aug 28)
+ * - Red date pills beneath task titles (e.g. "Today", "Tomorrow", "Aug 28") with flag/calendar icons
  * - Todoist Quick Add bottom sheet anchored above keyboard
  * - Tinted Red FAB (+)
  */
@@ -100,7 +101,7 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
     };
   }, [taskStatusFilter, taskPriorityFilter, searchQuery]);
 
-  const handleQuickAddTask = async (task: {
+  const handleQuickAddTask = async (newTask: {
     title: string;
     description?: string;
     priority: string;
@@ -108,27 +109,45 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
     project: string;
   }) => {
     try {
-      await createTask({
-        title: task.title,
-        description: task.description,
-        priority: task.priority,
-        due_at: task.due_at,
-        project: task.project,
-      });
+      await createTask(newTask);
       await loadData();
     } catch (err) {
-      console.error(err);
+      console.error("Failed to add task:", err);
     }
   };
 
   const handleSaveEditTask = async () => {
-    if (!taskTitle.trim() || !editingTask) return;
+    if (!editingTask || !taskTitle.trim()) return;
+
+    let finalTitle = taskTitle.trim();
+    let finalPrio = taskPriority;
+    let finalDue = taskDueDate ? new Date(taskDueDate).toISOString() : null;
+
+    // Check for shorthands in edit field too
+    const prioMatch = finalTitle.match(/\b([pP][1-4])\b/);
+    if (prioMatch) {
+      finalPrio = prioMatch[1].toUpperCase();
+      finalTitle = finalTitle.replace(/\b[pP][1-4]\b/, "").trim();
+    }
+    const todayMatch = finalTitle.match(/\b(tod|today)\b/i);
+    if (todayMatch) {
+      finalDue = new Date().toISOString();
+      finalTitle = finalTitle.replace(/\b(tod|today)\b/i, "").trim();
+    }
+    const tomMatch = finalTitle.match(/\b(tom|tomorrow)\b/i);
+    if (tomMatch) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      finalDue = tomorrow.toISOString();
+      finalTitle = finalTitle.replace(/\b(tom|tomorrow)\b/i, "").trim();
+    }
+
     try {
       await updateTask(editingTask.id, {
-        title: taskTitle,
-        description: taskDesc,
-        priority: taskPriority,
-        due_at: taskDueDate ? new Date(taskDueDate).toISOString() : null,
+        title: finalTitle,
+        description: taskDesc.trim() || undefined,
+        priority: finalPrio,
+        due_at: finalDue,
         project: taskProject,
       });
       setEditModalOpen(false);
@@ -161,16 +180,26 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
     }
   };
 
-  // Format date display like Todoist (e.g. Aug 28)
+  // Format date display like Todoist (e.g. "Today", "Tomorrow", "Aug 28")
   const formatDateLabel = (isoDate: string) => {
     const d = new Date(isoDate);
     const today = new Date();
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
     if (
       d.getDate() === today.getDate() &&
       d.getMonth() === today.getMonth() &&
       d.getFullYear() === today.getFullYear()
     ) {
       return "Today";
+    }
+    if (
+      d.getDate() === tomorrow.getDate() &&
+      d.getMonth() === tomorrow.getMonth() &&
+      d.getFullYear() === tomorrow.getFullYear()
+    ) {
+      return "Tomorrow";
     }
     return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
   };
@@ -181,11 +210,11 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        bgcolor: "#1E1E1E",
-        color: "#E8E8E8",
+        bgcolor: "#FFFFFF",
+        color: "#202020",
       }}
     >
-      {/* Top Header — Dark Todoist Inbox Style */}
+      {/* Top Header — Todoist Inbox Style (Light Theme) */}
       <Box
         sx={{
           px: 2,
@@ -194,22 +223,23 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
           display: "flex",
           alignItems: "center",
           gap: 1,
-          borderBottom: "1px solid #2C2C2C",
+          borderBottom: "1px solid #EEEEEE",
+          bgcolor: "#FFFFFF",
         }}
       >
         {onBack && (
-          <IconButton size="small" onClick={onBack} sx={{ color: "#E8E8E8" }}>
+          <IconButton size="small" onClick={onBack} sx={{ color: "#202020" }}>
             <ArrowBackRoundedIcon />
           </IconButton>
         )}
-        <Typography variant="h5" sx={{ fontWeight: 700, fontSize: "1.35rem", flexGrow: 1 }}>
+        <Typography variant="h5" sx={{ fontWeight: 700, fontSize: "1.35rem", flexGrow: 1, color: "#202020" }}>
           Inbox
         </Typography>
 
-        <IconButton size="small" sx={{ color: "#A0A0A0" }}>
+        <IconButton size="small" sx={{ color: "#666666" }}>
           <FormatListBulletedRoundedIcon />
         </IconButton>
-        <IconButton size="small" sx={{ color: "#A0A0A0" }}>
+        <IconButton size="small" sx={{ color: "#666666" }}>
           <MoreVertRoundedIcon />
         </IconButton>
       </Box>
@@ -225,7 +255,7 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
             input: {
               startAdornment: (
                 <InputAdornment position="start">
-                  <SearchRoundedIcon sx={{ fontSize: 20, color: "#808080" }} />
+                  <SearchRoundedIcon sx={{ fontSize: 20, color: "#888888" }} />
                 </InputAdornment>
               ),
             },
@@ -233,14 +263,15 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
           sx={{
             "& .MuiOutlinedInput-root": {
               borderRadius: 3,
-              bgcolor: "#282828",
-              color: "#E8E8E8",
-              "& fieldset": { borderColor: "#333333" },
+              bgcolor: "#F5F5F5",
+              color: "#202020",
+              "& fieldset": { borderColor: "#E5E5E5" },
+              "&:hover fieldset": { borderColor: "#CCCCCC" },
             },
           }}
         />
 
-        <Box sx={{ display: "flex", gap: 0.75, flexWrap: "wrap" }}>
+        <Box sx={{ display: "flex", gap: 0.75, flexWrap: "wrap", alignItems: "center" }}>
           {["todo", "completed", "ALL"].map((st) => (
             <Chip
               key={st}
@@ -248,7 +279,15 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
               label={st === "todo" ? "Active" : st === "completed" ? "Completed" : "All"}
               color={taskStatusFilter === st ? "error" : "default"}
               onClick={() => setTaskStatusFilter(st)}
-              sx={{ fontWeight: 500, fontSize: "0.78rem" }}
+              sx={{
+                fontWeight: 500,
+                fontSize: "0.78rem",
+                bgcolor: taskStatusFilter === st ? "#DC4C3E" : "#F3F3F3",
+                color: taskStatusFilter === st ? "#FFFFFF" : "#444444",
+                "&:hover": {
+                  bgcolor: taskStatusFilter === st ? "#B9382B" : "#EAEAEA",
+                },
+              }}
             />
           ))}
           {["P1", "P2", "P3", "P4"].map((p) => (
@@ -274,7 +313,7 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
       <Box sx={{ flexGrow: 1, overflowY: "auto", px: 2, pb: 12 }}>
         <Box sx={{ display: "flex", flexDirection: "column" }}>
           {tasks.length === 0 ? (
-            <Typography color="#808080" sx={{ py: 6, textAlign: "center", fontSize: "0.95rem" }}>
+            <Typography color="#888888" sx={{ py: 6, textAlign: "center", fontSize: "0.95rem" }}>
               No tasks found. Tap + to add a task.
             </Typography>
           ) : (
@@ -287,9 +326,9 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
                   alignItems: "flex-start",
                   py: 1.25,
                   px: 0.5,
-                  borderBottom: "1px solid #282828",
+                  borderBottom: "1px solid #F0F0F0",
                   gap: 1.5,
-                  "&:hover": { bgcolor: "#242424" },
+                  "&:hover": { bgcolor: "#FAFAFA" },
                 }}
               >
                 {/* Priority Checkbox */}
@@ -318,7 +357,7 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
                       fontSize: "0.98rem",
                       fontWeight: 400,
                       textDecoration: t.status === "completed" ? "line-through" : "none",
-                      color: t.status === "completed" ? "#707070" : "#E8E8E8",
+                      color: t.status === "completed" ? "#999999" : "#202020",
                       lineHeight: 1.35,
                     }}
                   >
@@ -326,12 +365,12 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
                   </Typography>
 
                   {t.description && (
-                    <Typography variant="body2" sx={{ fontSize: "0.82rem", color: "#A0A0A0", mt: 0.25 }}>
+                    <Typography variant="body2" sx={{ fontSize: "0.82rem", color: "#666666", mt: 0.25 }}>
                       {t.description}
                     </Typography>
                   )}
 
-                  {/* Subtitle Details — Red Date Pill matching Todoist screenshot */}
+                  {/* Subtitle Details — Red Date Pill matching Todoist style */}
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1.25, mt: 0.5 }}>
                     {t.due_at && (
                       <Typography
@@ -352,7 +391,7 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
                     {t.project && t.project !== "Inbox" && (
                       <Typography
                         variant="caption"
-                        sx={{ color: "#808080", fontSize: "0.75rem" }}
+                        sx={{ color: "#777777", fontSize: "0.75rem" }}
                       >
                         #{t.project}
                       </Typography>
@@ -362,7 +401,7 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
 
                 {/* Delete IconButton */}
                 <IconButton size="small" onClick={() => void handleDeleteTask(t.id)}>
-                  <DeleteOutlineRoundedIcon sx={{ fontSize: 18, color: "#606060" }} />
+                  <DeleteOutlineRoundedIcon sx={{ fontSize: 18, color: "#999999", "&:hover": { color: "#DC4C3E" } }} />
                 </IconButton>
               </Box>
             ))
@@ -380,7 +419,7 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
           right: 20,
           bottom: `calc(24px + env(safe-area-inset-bottom))`,
           bgcolor: "#DC4C3E",
-          boxShadow: "0 8px 24px rgba(220, 76, 62, 0.45)",
+          boxShadow: "0 8px 24px rgba(220, 76, 62, 0.4)",
           "&:hover": { bgcolor: "#B9382B" },
         }}
       >
@@ -401,9 +440,18 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
         onClose={() => setEditModalOpen(false)}
         fullWidth
         maxWidth="xs"
-        slotProps={{ paper: { sx: { bgcolor: "#242424", color: "#FFF" } } }}
+        slotProps={{
+          paper: {
+            sx: {
+              bgcolor: "#FFFFFF",
+              color: "#202020",
+              borderRadius: 3,
+              border: "1px solid #EEEEEE",
+            },
+          },
+        }}
       >
-        <DialogTitle sx={{ fontWeight: 700 }}>Edit Task</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 700, color: "#202020" }}>Edit Task</DialogTitle>
         <DialogContent sx={{ display: "flex", flexDirection: "column", gap: 2, pt: 1 }}>
           <TextField
             autoFocus
@@ -413,7 +461,10 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
             fullWidth
             required
             variant="outlined"
-            slotProps={{ input: { sx: { color: "#FFF" } } }}
+            slotProps={{
+              input: { sx: { color: "#202020" } },
+              inputLabel: { sx: { color: "#666666" } },
+            }}
           />
           <TextField
             label="Description (optional)"
@@ -422,16 +473,19 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
             fullWidth
             multiline
             rows={2}
-            slotProps={{ input: { sx: { color: "#FFF" } } }}
+            slotProps={{
+              input: { sx: { color: "#202020" } },
+              inputLabel: { sx: { color: "#666666" } },
+            }}
           />
           <Box sx={{ display: "flex", gap: 2 }}>
             <FormControl fullWidth size="small">
-              <InputLabel sx={{ color: "#AAA" }}>Priority</InputLabel>
+              <InputLabel sx={{ color: "#666666" }}>Priority</InputLabel>
               <Select
                 value={taskPriority}
                 label="Priority"
                 onChange={(e) => setTaskPriority(e.target.value)}
-                sx={{ color: "#FFF" }}
+                sx={{ color: "#202020" }}
               >
                 <MenuItem value="P1" sx={{ color: PRIORITY_COLORS.P1, fontWeight: 700 }}>P1 — Red</MenuItem>
                 <MenuItem value="P2" sx={{ color: PRIORITY_COLORS.P2, fontWeight: 700 }}>P2 — Orange</MenuItem>
@@ -445,7 +499,10 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
               label="Project"
               value={taskProject}
               onChange={(e) => setTaskProject(e.target.value)}
-              slotProps={{ input: { sx: { color: "#FFF" } } }}
+              slotProps={{
+                input: { sx: { color: "#202020" } },
+                inputLabel: { sx: { color: "#666666" } },
+              }}
             />
           </Box>
           <TextField
@@ -453,13 +510,16 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
             label="Due Date & Time"
             value={taskDueDate}
             onChange={(e) => setTaskDueDate(e.target.value)}
-            slotProps={{ inputLabel: { shrink: true, sx: { color: "#AAA" } }, input: { sx: { color: "#FFF" } } }}
+            slotProps={{
+              inputLabel: { shrink: true, sx: { color: "#666666" } },
+              input: { sx: { color: "#202020" } },
+            }}
             fullWidth
             size="small"
           />
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setEditModalOpen(false)} sx={{ color: "#AAA" }}>Cancel</Button>
+          <Button onClick={() => setEditModalOpen(false)} sx={{ color: "#666666" }}>Cancel</Button>
           <Button
             variant="contained"
             onClick={() => void handleSaveEditTask()}

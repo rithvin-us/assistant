@@ -746,3 +746,155 @@ slower and more expensive without limit. Something said forty messages ago is
 forgotten, which is the correct behaviour for a conversation log and the wrong
 behaviour for memory — which is exactly why memory is a separate system
 (ADR-0021).
+
+---
+
+## ADR-0023 — The `public` schema is closed to PostgREST, by RLS and by grant
+
+**Decision.** Every table in `public` has row level security enabled with an
+empty policy set, and `anon` and `authenticated` hold no grants on the schema —
+including by default, for tables that do not exist yet. `assistant-server`
+remains the only way into this data.
+
+**Context.** The database is a Supabase project. Supabase publishes `public`
+through PostgREST and GraphQL and grants `anon` and `authenticated` full DML on
+every table created there (`arwdDxtm`), via `alter default privileges` that
+applies to future tables as well. Neither role holds BYPASSRLS.
+
+Every table shipped through Milestone 4 was created with RLS off, which is the
+Postgres default and which Supabase does not change. The live database was
+therefore reachable — read, write, and `TRUNCATE` — by anyone holding the
+project's anon key, against `users`, `conversations`, `messages`,
+`tool_executions`, `approval_requests` and `audit_events`. The anon key is
+designed to be distributed to clients; it is not a secret and cannot be treated
+as one.
+
+Two tables make this worse than a data-exposure finding. `approval_requests`
+and `audit_events` are the durable half of the permission architecture: ADR-0015
+says an approval authorises exactly one persisted action and is re-validated
+against the record before it runs. A caller who can `INSERT` into
+`approval_requests` manufactures that record, and a caller who can `DELETE` from
+`audit_events` erases the evidence. An open `public` schema is not a
+confidentiality bug here, it is an authorisation bypass of ADR-0014 through
+ADR-0016.
+
+**Options.**
+
+1. Write per-table RLS policies keyed on `auth.uid()`, the Supabase-native
+   approach.
+2. Enable RLS with no policies, and revoke the PostgREST role grants.
+3. Move the tables out of `public` into a schema PostgREST does not expose.
+4. Leave it, and rely on the anon key not leaking.
+
+**Chosen approach: option 2.**
+
+**Reason.** Option 1 solves a problem this project does not have. PostgREST is
+not a client here and ADR-0008 already says the webview makes no network calls
+of its own; there is no browser holding a Supabase JWT for `auth.uid()` to
+return. Writing policies would state the ownership rule a second time, in a
+second language, where it could drift from the `user_id` predicates the server
+already writes — and it would quietly bless PostgREST as a supported entry
+point, which would put a second execution path next to
+`ToolExecutor::run_authorized`.
+
+Option 2 matches how the system actually works. `assistant-server` connects as
+`postgres`, which owns these tables and holds BYPASSRLS, so an empty policy set
+costs the server nothing and denies everyone else everything. The revoked grants
+are belt to that braces: a table added later where someone forgets `enable row
+level security` is still unreachable, because the roles that could reach it have
+no privileges on the schema.
+
+Option 3 is a larger change for the same result, and fights the tooling —
+`sqlx` and the Supabase dashboard both assume `public`. Option 4 makes a
+published key the only control, which is what the current state already is.
+
+`force row level security` is not used. It would apply the empty policy set to
+the table owner as well, and the owner is the server.
+
+**Consequences.** The Supabase dashboard's table editor still works, because it
+connects as a privileged role rather than as `anon`. Any future client that
+wants PostgREST access does not get it by default; it needs its own ADR, and
+that ADR has to explain how it avoids becoming a second execution path. The
+security advisor's "RLS Disabled in Public" findings go quiet, which means the
+next one it raises will be a real one rather than noise in a list of seven.
+
+---
+
+## ADR-0024 — Authentication is a Supabase-issued ES256 JWT, verified against JWKS
+
+**Decision.** `assistant-server` authenticates callers by verifying a JWT issued
+by the project's Supabase Auth (GoTrue) instance, using the ES256 public key
+published at the project's JWKS endpoint. `DevTokenVerifier` stays, but only
+behind an explicit configuration choice for offline work. Supersedes ADR-0009.
+
+**Context.** ADR-0009 shipped a static shared bearer token as an honest
+placeholder, on the stated condition that it never leave local development. It
+has since left: the token reaches the Android app through `VITE_DEV_AUTH_TOKEN`,
+and Vite inlines `VITE_*` at build time, so it is a string in the shipped
+bundle — recoverable with `unzip` and `strings`. That breaks the rule in
+CLAUDE.md that no secret lives in `apps/mobile`.
+
+It is also the reason `user_id` scoping is currently decorative. Every caller
+presenting the one token maps to one hardcoded `DevTokenVerifier::DEV_USER_ID`,
+so the `where user_id = $1` predicates in every productivity query are all
+comparing against the same constant. Two devices are one account. The rows are
+scoped correctly against an identity that does not vary.
+
+The database is already a Supabase project. Its GoTrue instance is provisioned,
+the `auth` schema exists, and the project's JWKS endpoint serves a single
+`kty=EC, alg=ES256, use=sig` key — this project signs asymmetrically rather than
+with the legacy shared HS256 secret.
+
+**Options.**
+
+1. Verify Supabase's ES256 JWT against the published JWKS.
+2. Verify Supabase's JWT with the legacy HS256 shared secret.
+3. Issue our own JWTs from an email/password table inside `assistant-auth`.
+4. Keep the static token and stop shipping it in the bundle some other way.
+
+**Chosen approach: option 1.**
+
+**Reason.** Option 1 asks the server to hold no secret at all. Verification
+needs only a public key, so there is nothing in the server's configuration that
+leaking would let an attacker forge a token with — which is a materially
+different failure mode from option 2, where the signing secret and the
+verification secret are the same string, and any leak anywhere mints valid
+tokens for every user. Asymmetric signing also makes key rotation Supabase's
+problem: a new `kid` appears in the JWKS and the server picks it up, with no
+coordinated secret change.
+
+Option 3 means owning password hashing, reset-email delivery, lockout and
+rate-limiting. Each is a well-understood problem and each is a way to be wrong
+quietly. Supabase Auth is already paid for and already running; adding a second
+identity system next to it would violate the rule against infrastructure without
+a demonstrated need.
+
+Option 4 does not address that every caller is still one user.
+
+**How it works.** `SupabaseJwtVerifier` implements the existing `TokenVerifier`
+trait, so `AppState` continues to hold `Arc<dyn TokenVerifier>` and no handler
+changes. Verification checks the ES256 signature against the JWKS key matching
+the token's `kid`, and rejects on `exp`, on an `iss` that is not the project's
+auth issuer, and on an `aud` that is not `authenticated`. The `sub` claim is a
+UUID and becomes `Principal::user_id`; nothing else in the token is trusted to
+carry authority.
+
+The JWKS is fetched once and cached. A `kid` that is absent from the cache
+triggers exactly one refetch, rate-limited, so a token bearing an unknown `kid`
+cannot be used to drive unbounded outbound requests.
+
+**What does not change.** `PermissionPolicy::evaluate` still takes a `ToolSpec`
+and a `Principal` and nothing else — the claims in a JWT are input to *who* the
+caller is, never to *what* they may do. Scopes in the token are deliberately not
+read as tool permissions; risk stays a static property of a `ToolSpec`
+(ADR-0005). RLS remains policy-free and PostgREST remains closed (ADR-0023):
+Supabase issues the identity, but it still is not a client of this database.
+
+**Consequences.** The app gains a sign-in screen, and the token it receives is
+short-lived and per-device, so no credential is compiled into the bundle. The
+existing rows owned by `DEV_USER_ID` belong to no real account and are not
+migrated. `users.id` must line up with GoTrue's `auth.users.id` for the foreign
+keys to mean anything, so `ensure_user` becomes an insert of a known subject
+rather than of an invented one. Offline development still works, because
+`DevTokenVerifier` remains selectable — but it is now selected explicitly rather
+than by default, so shipping it takes a deliberate act.

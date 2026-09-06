@@ -5,6 +5,10 @@
 //! `TODO`, and so wiring Supabase JWT verification later touches one file
 //! instead of every handler. It is not a security control.
 
+pub mod supabase;
+
+pub use supabase::SupabaseJwtVerifier;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;

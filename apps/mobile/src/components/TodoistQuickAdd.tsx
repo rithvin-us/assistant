@@ -1,11 +1,16 @@
 /**
- * Todoist Quick Add Sheet / Bottom Bar Component.
+ * Todoist Quick Add Sheet / Bottom Bar Component — Authentic Todoist Light Theme.
  *
- * Recreates the exact Todoist quick task assignment interface:
- * - Floating bottom sheet above keyboard
+ * Features:
+ * - Floating bottom sheet above keyboard with clean pure white canvas
  * - "Task name" input with red accent cursor
- * - Quick action chips: [+] [Inbox / Project] [Date] [Priority] [Attachment]
- * - Signature Todoist Red submit button with wave/send icon
+ * - Natural language shorthand typing:
+ *     - "p1", "p2", "p3", "p4" -> automatically assigns priority
+ *     - "tod", "today" -> automatically sets due date to Today
+ *     - "tom", "tomorrow" -> automatically sets due date to Tomorrow
+ *     - Automatically parses and attaches flags & date badges
+ * - Quick action chips: [+] [Inbox / Project] [Date Flag] [Priority] [Attachment]
+ * - Signature Todoist Red submit button with send icon
  */
 
 import { useState, useRef, useEffect } from "react";
@@ -86,13 +91,70 @@ export default function TodoistQuickAdd({
     onClose();
   };
 
+  // Natural language & shorthand parser for task input:
+  // e.g. typing "p1", "p2", "p3", "tod", "tom"
+  const handleTitleChange = (val: string) => {
+    let newTitle = val;
+
+    // Detect priority shorthands: p1, p2, p3, p4 (case-insensitive)
+    const prioMatch = newTitle.match(/\b([pP][1-4])\b/);
+    if (prioMatch) {
+      const matched = prioMatch[1].toUpperCase();
+      setPriority(matched);
+      newTitle = newTitle.replace(/\b[pP][1-4]\b/, "").replace(/\s{2,}/g, " ");
+    }
+
+    // Detect today shorthands: tod, today
+    const todayMatch = newTitle.match(/\b(tod|today)\b/i);
+    if (todayMatch) {
+      setDueDateLabel("Today");
+      setDueAtIso(new Date().toISOString());
+      newTitle = newTitle.replace(/\b(tod|today)\b/i, "").replace(/\s{2,}/g, " ");
+    }
+
+    // Detect tomorrow shorthands: tom, tomorrow
+    const tomMatch = newTitle.match(/\b(tom|tomorrow)\b/i);
+    if (tomMatch) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      setDueDateLabel("Tomorrow");
+      setDueAtIso(tomorrow.toISOString());
+      newTitle = newTitle.replace(/\b(tom|tomorrow)\b/i, "").replace(/\s{2,}/g, " ");
+    }
+
+    setTitle(newTitle);
+  };
+
   const handleSubmit = async () => {
-    if (!title.trim()) return;
-    const taskTitle = title.trim();
+    let taskTitle = title.trim();
+    if (!taskTitle) return;
+
+    let taskPrio = priority;
+    let taskDue = dueAtIso || undefined;
+
+    // Final pass for shorthand cleanup if typed at the very end
+    const prioMatch = taskTitle.match(/\b([pP][1-4])\b/);
+    if (prioMatch) {
+      taskPrio = prioMatch[1].toUpperCase();
+      taskTitle = taskTitle.replace(/\b[pP][1-4]\b/, "").trim();
+    }
+    const todayMatch = taskTitle.match(/\b(tod|today)\b/i);
+    if (todayMatch) {
+      taskDue = new Date().toISOString();
+      taskTitle = taskTitle.replace(/\b(tod|today)\b/i, "").trim();
+    }
+    const tomMatch = taskTitle.match(/\b(tom|tomorrow)\b/i);
+    if (tomMatch) {
+      const tomorrow = new Date();
+      tomorrow.setDate(tomorrow.getDate() + 1);
+      taskDue = tomorrow.toISOString();
+      taskTitle = taskTitle.replace(/\b(tom|tomorrow)\b/i, "").trim();
+    }
+
+    if (!taskTitle) return;
+
     const taskDesc = description.trim();
     const taskProj = project;
-    const taskPrio = priority;
-    const taskDue = dueAtIso || undefined;
 
     // Reset fields for rapid consecutive entry
     setTitle("");
@@ -123,23 +185,24 @@ export default function TodoistQuickAdd({
         display: "flex",
         flexDirection: "column",
         justifyContent: "flex-end",
-        bgcolor: "rgba(0, 0, 0, 0.4)",
+        bgcolor: "rgba(0, 0, 0, 0.35)",
         animation: "fadeIn 0.15s ease-out",
       }}
       onClick={(e) => {
         if (e.target === e.currentTarget) handleClose();
       }}
     >
-      {/* Quick Add Card anchored above keyboard */}
+      {/* Quick Add Card anchored above keyboard — Pure Light Canvas */}
       <Box
         sx={{
-          bgcolor: "#212121",
-          color: "#E8E8E8",
+          bgcolor: "#FFFFFF",
+          color: "#202020",
           borderTopLeftRadius: 20,
           borderTopRightRadius: 20,
+          borderTop: "1px solid #EEEEEE",
           p: 2,
           pb: `calc(12px + env(safe-area-inset-bottom))`,
-          boxShadow: "0 -8px 32px rgba(0,0,0,0.5)",
+          boxShadow: "0 -8px 30px rgba(0,0,0,0.15)",
           display: "flex",
           flexDirection: "column",
           gap: 1.5,
@@ -148,9 +211,9 @@ export default function TodoistQuickAdd({
         {/* Task Title Input */}
         <InputBase
           inputRef={inputRef}
-          placeholder="Task name"
+          placeholder="Task name (e.g. Call Arun p1 tod)"
           value={title}
-          onChange={(e) => setTitle(e.target.value)}
+          onChange={(e) => handleTitleChange(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -160,15 +223,15 @@ export default function TodoistQuickAdd({
           multiline
           maxRows={3}
           sx={{
-            color: "#FFFFFF",
-            fontSize: "1.1rem",
+            color: "#202020",
+            fontSize: "1.05rem",
             fontWeight: 500,
             "& .MuiInputBase-input": {
               caretColor: "#DC4C3E",
               p: 0.5,
             },
             "& .MuiInputBase-input::placeholder": {
-              color: "#808080",
+              color: "#888888",
               opacity: 1,
             },
           }}
@@ -183,155 +246,193 @@ export default function TodoistQuickAdd({
             multiline
             maxRows={2}
             sx={{
-              color: "#A0A0A0",
+              color: "#555555",
               fontSize: "0.9rem",
               px: 0.5,
               "& .MuiInputBase-input::placeholder": {
-                color: "#606060",
+                color: "#999999",
                 opacity: 1,
               },
             }}
           />
         )}
 
-        {/* Quick Action Buttons Row */}
+        {/* Action Row: Left scrollable chips + Pinned right submit button */}
         <Box
           sx={{
             display: "flex",
             alignItems: "center",
+            justifyContent: "space-between",
             gap: 1,
-            overflowX: "auto",
             pt: 0.5,
-            "::-webkit-scrollbar": { display: "none" },
           }}
         >
-          {/* [+] Description Toggle */}
-          <IconButton
-            size="small"
-            onClick={() => setShowDesc(!showDesc)}
-            sx={{
-              bgcolor: showDesc ? "rgba(220, 76, 62, 0.2)" : "#333333",
-              color: showDesc ? "#DC4C3E" : "#A0A0A0",
-              borderRadius: "10px",
-              width: 36,
-              height: 36,
-              "&:hover": { bgcolor: "#444444" },
-            }}
-          >
-            <AddRoundedIcon sx={{ fontSize: 20 }} />
-          </IconButton>
-
-          {/* [Inbox] Project Selector Chip */}
-          <Box
-            onClick={(e) => setProjectAnchor(e.currentTarget)}
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 0.75,
-              bgcolor: "#333333",
-              color: "#E8E8E8",
-              px: 1.5,
-              py: 0.75,
-              borderRadius: "10px",
-              cursor: "pointer",
-              fontSize: "0.85rem",
-              fontWeight: 500,
-              userSelect: "none",
-              "&:hover": { bgcolor: "#444444" },
-            }}
-          >
-            <InboxRoundedIcon sx={{ fontSize: 18, color: "#A0A0A0" }} />
-            <Typography variant="body2" sx={{ fontSize: "0.85rem", fontWeight: 500 }}>
-              {project}
-            </Typography>
-          </Box>
-
-          {/* [Date] Calendar Selector Chip */}
-          <Box
-            onClick={(e) => setDateAnchor(e.currentTarget)}
-            sx={{
-              display: "flex",
-              alignItems: "center",
-              gap: 0.75,
-              bgcolor: "#333333",
-              color: dueDateLabel ? "#DC4C3E" : "#E8E8E8",
-              px: 1.5,
-              py: 0.75,
-              borderRadius: "10px",
-              cursor: "pointer",
-              fontSize: "0.85rem",
-              fontWeight: 500,
-              userSelect: "none",
-              "&:hover": { bgcolor: "#444444" },
-            }}
-          >
-            <CalendarTodayRoundedIcon sx={{ fontSize: 16, color: dueDateLabel ? "#DC4C3E" : "#A0A0A0" }} />
-            <Typography variant="body2" sx={{ fontSize: "0.85rem", fontWeight: 500 }}>
-              {dueDateLabel || "Date"}
-            </Typography>
-          </Box>
-
-          {/* [Priority] Flag Chip */}
-          <IconButton
-            size="small"
-            onClick={(e) => setPriorityAnchor(e.currentTarget)}
-            sx={{
-              bgcolor: "#333333",
-              color: PRIORITY_COLORS[priority as keyof typeof PRIORITY_COLORS] || "#A0A0A0",
-              borderRadius: "10px",
-              width: 36,
-              height: 36,
-              "&:hover": { bgcolor: "#444444" },
-            }}
-          >
-            <FlagRoundedIcon sx={{ fontSize: 18 }} />
-          </IconButton>
-
-          {/* [Attachment] Chip */}
+          {/* Scrollable metadata chips */}
           <Box
             sx={{
               display: "flex",
               alignItems: "center",
-              gap: 0.75,
-              bgcolor: "#333333",
-              color: "#E8E8E8",
-              px: 1.5,
-              py: 0.75,
-              borderRadius: "10px",
-              cursor: "pointer",
-              fontSize: "0.85rem",
-              fontWeight: 500,
-              userSelect: "none",
-              "&:hover": { bgcolor: "#444444" },
+              gap: 1,
+              overflowX: "auto",
+              flexGrow: 1,
+              minWidth: 0,
+              "::-webkit-scrollbar": { display: "none" },
             }}
           >
-            <AttachFileRoundedIcon sx={{ fontSize: 16, color: "#A0A0A0" }} />
-            <Typography variant="body2" sx={{ fontSize: "0.85rem", fontWeight: 500 }}>
-              Attachment
-            </Typography>
+            {/* [+] Description Toggle */}
+            <IconButton
+              size="small"
+              onClick={() => setShowDesc(!showDesc)}
+              sx={{
+                bgcolor: showDesc ? "rgba(220, 76, 62, 0.12)" : "#F3F3F3",
+                color: showDesc ? "#DC4C3E" : "#555555",
+                border: "1px solid #E5E5E5",
+                borderRadius: "10px",
+                width: 36,
+                height: 36,
+                flexShrink: 0,
+                "&:hover": { bgcolor: "#EAEAEA" },
+              }}
+            >
+              <AddRoundedIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+
+            {/* [Inbox] Project Chip */}
+            <Box
+              onClick={(e) => setProjectAnchor(e.currentTarget)}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.75,
+                bgcolor: "#F3F3F3",
+                color: "#333333",
+                border: "1px solid #E5E5E5",
+                px: 1.5,
+                py: 0.75,
+                borderRadius: "10px",
+                cursor: "pointer",
+                fontSize: "0.85rem",
+                fontWeight: 500,
+                userSelect: "none",
+                flexShrink: 0,
+                "&:hover": { bgcolor: "#EAEAEA" },
+              }}
+            >
+              <InboxRoundedIcon sx={{ fontSize: 16, color: "#666666" }} />
+              <Typography variant="body2" sx={{ fontSize: "0.85rem", fontWeight: 500 }}>
+                {project}
+              </Typography>
+            </Box>
+
+            {/* [Date] Chip */}
+            <Box
+              onClick={(e) => setDateAnchor(e.currentTarget)}
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.75,
+                bgcolor: dueDateLabel ? "rgba(220, 76, 62, 0.12)" : "#F3F3F3",
+                color: dueDateLabel ? "#DC4C3E" : "#333333",
+                border: dueDateLabel ? "1px solid rgba(220, 76, 62, 0.3)" : "1px solid #E5E5E5",
+                px: 1.5,
+                py: 0.75,
+                borderRadius: "10px",
+                cursor: "pointer",
+                fontSize: "0.85rem",
+                fontWeight: 500,
+                userSelect: "none",
+                flexShrink: 0,
+                "&:hover": {
+                  bgcolor: dueDateLabel ? "rgba(220, 76, 62, 0.18)" : "#EAEAEA",
+                },
+              }}
+            >
+              <CalendarTodayRoundedIcon
+                sx={{
+                  fontSize: 16,
+                  color: dueDateLabel ? "#DC4C3E" : "#666666",
+                }}
+              />
+              <Typography
+                variant="body2"
+                sx={{
+                  fontSize: "0.85rem",
+                  fontWeight: dueDateLabel ? 600 : 500,
+                  color: dueDateLabel ? "#DC4C3E" : "#333333",
+                }}
+              >
+                {dueDateLabel || "Date"}
+              </Typography>
+            </Box>
+
+            {/* [Priority] Flag Button */}
+            <IconButton
+              size="small"
+              onClick={(e) => setPriorityAnchor(e.currentTarget)}
+              sx={{
+                bgcolor: priority !== "P4" ? `${PRIORITY_COLORS[priority as keyof typeof PRIORITY_COLORS]}18` : "#F3F3F3",
+                color: PRIORITY_COLORS[priority as keyof typeof PRIORITY_COLORS] || "#666666",
+                border:
+                  priority !== "P4"
+                    ? `1px solid ${PRIORITY_COLORS[priority as keyof typeof PRIORITY_COLORS]}44`
+                    : "1px solid #E5E5E5",
+                borderRadius: "10px",
+                width: 36,
+                height: 36,
+                flexShrink: 0,
+                "&:hover": { bgcolor: "#EAEAEA" },
+              }}
+            >
+              <FlagRoundedIcon sx={{ fontSize: 18 }} />
+            </IconButton>
+
+            {/* [Attachment] Chip */}
+            <Box
+              sx={{
+                display: "flex",
+                alignItems: "center",
+                gap: 0.75,
+                bgcolor: "#F3F3F3",
+                color: "#333333",
+                border: "1px solid #E5E5E5",
+                px: 1.5,
+                py: 0.75,
+                borderRadius: "10px",
+                cursor: "pointer",
+                fontSize: "0.85rem",
+                fontWeight: 500,
+                userSelect: "none",
+                flexShrink: 0,
+                "&:hover": { bgcolor: "#EAEAEA" },
+              }}
+            >
+              <AttachFileRoundedIcon sx={{ fontSize: 16, color: "#666666" }} />
+              <Typography variant="body2" sx={{ fontSize: "0.85rem", fontWeight: 500 }}>
+                Attachment
+              </Typography>
+            </Box>
           </Box>
 
-          {/* Spacer */}
-          <Box sx={{ flexGrow: 1 }} />
-
-          {/* Todoist Red Submit Action Button */}
+          {/* Todoist Red Submit Action Button (Always Pinned Right) */}
           <IconButton
             onClick={() => void handleSubmit()}
             disabled={!title.trim()}
             sx={{
-              bgcolor: title.trim() ? "#DC4C3E" : "#444444",
-              color: "#FFFFFF",
+              bgcolor: title.trim() ? "#DC4C3E" : "#F3F3F3",
+              color: title.trim() ? "#FFFFFF" : "#AAAAAA",
+              border: title.trim() ? "none" : "1px solid #E5E5E5",
               borderRadius: "14px",
               width: 42,
               height: 42,
+              flexShrink: 0,
               boxShadow: title.trim() ? "0 4px 14px rgba(220, 76, 62, 0.4)" : "none",
               transition: "all 0.15s ease-in-out",
               "&:hover": {
-                bgcolor: title.trim() ? "#B9382B" : "#444444",
+                bgcolor: title.trim() ? "#B9382B" : "#EAEAEA",
               },
               "&.Mui-disabled": {
-                bgcolor: "#333333",
-                color: "#606060",
+                bgcolor: "#F3F3F3",
+                color: "#AAAAAA",
               },
             }}
           >
@@ -344,7 +445,17 @@ export default function TodoistQuickAdd({
           anchorEl={projectAnchor}
           open={Boolean(projectAnchor)}
           onClose={() => setProjectAnchor(null)}
-          slotProps={{ paper: { sx: { bgcolor: "#2A2A2A", color: "#FFF", borderRadius: 2 } } }}
+          slotProps={{
+            paper: {
+              sx: {
+                bgcolor: "#FFFFFF",
+                color: "#202020",
+                border: "1px solid #E5E5E5",
+                boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
+                borderRadius: 2,
+              },
+            },
+          }}
         >
           {["Inbox", "Personal", "Work", "Ideas"].map((p) => (
             <MenuItem
@@ -365,12 +476,21 @@ export default function TodoistQuickAdd({
           anchorEl={dateAnchor}
           open={Boolean(dateAnchor)}
           onClose={() => setDateAnchor(null)}
-          slotProps={{ paper: { sx: { bgcolor: "#2A2A2A", color: "#FFF", borderRadius: 2 } } }}
+          slotProps={{
+            paper: {
+              sx: {
+                bgcolor: "#FFFFFF",
+                color: "#202020",
+                border: "1px solid #E5E5E5",
+                boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
+                borderRadius: 2,
+              },
+            },
+          }}
         >
           <MenuItem
-            onClick={() =>
-              handleSetDateOption("Today", new Date().toISOString())
-            }
+            onClick={() => handleSetDateOption("Today", new Date().toISOString())}
+            sx={{ color: "#DC4C3E", fontWeight: 600 }}
           >
             Today
           </MenuItem>
@@ -380,6 +500,7 @@ export default function TodoistQuickAdd({
               tomorrow.setDate(tomorrow.getDate() + 1);
               handleSetDateOption("Tomorrow", tomorrow.toISOString());
             }}
+            sx={{ color: "#E67E22", fontWeight: 500 }}
           >
             Tomorrow
           </MenuItem>
@@ -389,6 +510,7 @@ export default function TodoistQuickAdd({
               nextWeek.setDate(nextWeek.getDate() + 7);
               handleSetDateOption("Next week", nextWeek.toISOString());
             }}
+            sx={{ color: "#2980B9", fontWeight: 500 }}
           >
             Next week
           </MenuItem>
@@ -402,7 +524,17 @@ export default function TodoistQuickAdd({
           anchorEl={priorityAnchor}
           open={Boolean(priorityAnchor)}
           onClose={() => setPriorityAnchor(null)}
-          slotProps={{ paper: { sx: { bgcolor: "#2A2A2A", color: "#FFF", borderRadius: 2 } } }}
+          slotProps={{
+            paper: {
+              sx: {
+                bgcolor: "#FFFFFF",
+                color: "#202020",
+                border: "1px solid #E5E5E5",
+                boxShadow: "0 6px 20px rgba(0,0,0,0.12)",
+                borderRadius: 2,
+              },
+            },
+          }}
         >
           <MenuItem
             onClick={() => {

@@ -29,6 +29,10 @@ fn config() -> Config {
         bind_addr: "127.0.0.1:0".parse().expect("valid address"),
         database_url: None,
         dev_auth_token: TEST_TOKEN.to_string(),
+        // These tests exercise the transport and the permission seam, not
+        // identity, so they keep the development verifier rather than needing a
+        // Supabase project and a signed token per request.
+        supabase_project_ref: None,
         allowed_origins: vec!["http://localhost:1420".to_string()],
         log_filter: "off".to_string(),
         max_tool_rounds: 4,

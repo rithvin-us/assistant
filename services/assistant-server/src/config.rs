@@ -24,8 +24,13 @@ pub struct Config {
     /// server still starts and reports itself degraded, so the frontend can be
     /// developed without a database.
     pub database_url: Option<String>,
-    /// Shared bearer token for the development auth placeholder.
+    /// Shared bearer token for the development auth placeholder. Used only
+    /// when no Supabase project is configured.
     pub dev_auth_token: String,
+    /// Supabase project reference. When set, callers are authenticated by a
+    /// Supabase-issued ES256 JWT and the development token is not accepted.
+    /// See ADR-0024.
+    pub supabase_project_ref: Option<String>,
     /// Origins allowed by CORS during development.
     pub allowed_origins: Vec<String>,
     /// `RUST_LOG`-style filter.
@@ -78,6 +83,10 @@ impl Config {
             bind_addr,
             database_url: std::env::var("DATABASE_URL").ok().filter(|s| !s.is_empty()),
             dev_auth_token,
+            supabase_project_ref: std::env::var("SUPABASE_PROJECT_REF")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
             allowed_origins,
             log_filter: env_or("RUST_LOG", "assistant_server=debug,tower_http=debug,info"),
             max_tool_rounds: env_or("ASSISTANT_MAX_TOOL_ROUNDS", "4")
@@ -149,6 +158,7 @@ impl fmt::Debug for Config {
                 &self.database_url.as_ref().map(|_| "<redacted>"),
             )
             .field("dev_auth_token", &"<redacted>")
+            .field("supabase_project_ref", &self.supabase_project_ref)
             .field("allowed_origins", &self.allowed_origins)
             .field("log_filter", &self.log_filter)
             .field("max_tool_rounds", &self.max_tool_rounds)

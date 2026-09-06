@@ -14,12 +14,44 @@ use uuid::Uuid;
 
 use crate::{error::AppError, state::SharedState};
 
+/// Maps a database error to the status the caller actually deserves.
+///
+/// These tables carry real `check` constraints -- `priority in ('P1'..'P4')`,
+/// `status in ('todo', 'completed', 'archived')` -- and a foreign key from a
+/// reminder to its task. A client that sends a value outside one of those
+/// enums has made a bad request; reporting it as 500 tells the client nothing
+/// and buries genuine server faults in an error rate made mostly of client
+/// typos. Everything else is still opaque and still logged by `AppError`.
+fn db_error(error: sqlx::Error) -> AppError {
+    if let sqlx::Error::Database(ref db) = error
+        && (db.is_check_violation() || db.is_foreign_key_violation())
+    {
+        let constraint = db.constraint().unwrap_or("a constraint");
+        return AppError::BadRequest(format!("value rejected by {constraint}"));
+    }
+    AppError::Internal(error.into())
+}
+
+/// Distinguishes "field absent" from "field present and explicitly null".
+///
+/// `Option<Option<T>>` on its own does not: serde folds a JSON `null` into the
+/// outer `None`, so `{"due_at": null}` and `{}` both arrive as `None` and a due
+/// date can never be cleared -- only overwritten. Paired with `default`, this
+/// makes an absent field `None` and an explicit `null` `Some(None)`.
+fn double_option<'de, T, D>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    T: Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    Deserialize::deserialize(deserializer).map(Some)
+}
+
 async fn ensure_user(pool: &PgPool, user_id: Uuid) -> Result<(), AppError> {
     sqlx::query("insert into users (id) values ($1) on conflict (id) do nothing")
         .bind(user_id)
         .execute(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
     Ok(())
 }
 
@@ -110,6 +142,8 @@ pub struct UpdateTaskInput {
     pub description: Option<String>,
     pub priority: Option<String>,
     pub status: Option<String>,
+    /// Absent leaves the due date alone; an explicit `null` clears it.
+    #[serde(default, deserialize_with = "double_option")]
     pub due_at: Option<Option<OffsetDateTime>>,
     pub project: Option<String>,
 }
@@ -148,13 +182,13 @@ pub async fn list_tasks(
         .bind(principal.user_id)
         .fetch_all(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     let tasks = rows
         .iter()
         .map(task_from_row)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
     Ok(Json(tasks))
 }
 
@@ -183,9 +217,9 @@ pub async fn create_task(
     .bind(project)
     .fetch_one(pool)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?;
+    .map_err(db_error)?;
 
-    let task = task_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    let task = task_from_row(&row).map_err(db_error)?;
     Ok(Json(task))
 }
 
@@ -202,7 +236,7 @@ pub async fn update_task(
         .bind(principal.user_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     let Some(current) = current_row else {
         return Err(AppError::NotFound);
@@ -220,10 +254,21 @@ pub async fn update_task(
         None => current.get("due_at"),
     };
 
-    let completed_at: Option<OffsetDateTime> = if status == "completed" {
-        Some(OffsetDateTime::now_utc())
-    } else {
-        None
+    // `completed_at` records when the task was completed, so it is written on
+    // the transition *into* `completed` and never recomputed afterwards.
+    //
+    // Deriving it from the resulting status alone had two failure modes, both
+    // silent and both destroying data already written: editing the title of a
+    // completed task resolved `status` from the current row, saw "completed",
+    // and overwrote the original timestamp with `now()`; and archiving a
+    // completed task took the `else` branch and erased it outright.
+    let previously_completed: Option<OffsetDateTime> = current.get("completed_at");
+    let completed_at: Option<OffsetDateTime> = match status.as_str() {
+        "completed" => previously_completed.or_else(|| Some(OffsetDateTime::now_utc())),
+        // Reopening a task genuinely un-completes it.
+        "todo" => None,
+        // Archiving keeps the record of when the work was finished.
+        _ => previously_completed,
     };
 
     let row = sqlx::query(
@@ -242,9 +287,9 @@ pub async fn update_task(
     .bind(principal.user_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?;
+    .map_err(db_error)?;
 
-    let task = task_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    let task = task_from_row(&row).map_err(db_error)?;
     Ok(Json(task))
 }
 
@@ -259,7 +304,7 @@ pub async fn delete_task(
         .bind(principal.user_id)
         .execute(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound);
@@ -288,6 +333,9 @@ pub struct UpdateReminderInput {
     pub title: Option<String>,
     pub remind_at: Option<OffsetDateTime>,
     pub status: Option<String>,
+    /// Absent leaves the link alone; an explicit `null` detaches the reminder
+    /// from its task.
+    #[serde(default, deserialize_with = "double_option")]
     pub task_id: Option<Option<Uuid>>,
 }
 
@@ -317,13 +365,13 @@ pub async fn list_reminders(
         .bind(principal.user_id)
         .fetch_all(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     let reminders = rows
         .iter()
         .map(reminder_from_row)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
     Ok(Json(reminders))
 }
 
@@ -346,9 +394,9 @@ pub async fn create_reminder(
     .bind(input.task_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?;
+    .map_err(db_error)?;
 
-    let reminder = reminder_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    let reminder = reminder_from_row(&row).map_err(db_error)?;
     Ok(Json(reminder))
 }
 
@@ -365,7 +413,7 @@ pub async fn update_reminder(
         .bind(principal.user_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     let Some(current) = current_row else {
         return Err(AppError::NotFound);
@@ -392,9 +440,9 @@ pub async fn update_reminder(
     .bind(principal.user_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?;
+    .map_err(db_error)?;
 
-    let reminder = reminder_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    let reminder = reminder_from_row(&row).map_err(db_error)?;
     Ok(Json(reminder))
 }
 
@@ -409,7 +457,7 @@ pub async fn delete_reminder(
         .bind(principal.user_id)
         .execute(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound);
@@ -469,13 +517,13 @@ pub async fn list_notes(
         .bind(principal.user_id)
         .fetch_all(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     let notes = rows
         .iter()
         .map(note_from_row)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
     Ok(Json(notes))
 }
 
@@ -501,9 +549,9 @@ pub async fn create_note(
     .bind(tags)
     .fetch_one(pool)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?;
+    .map_err(db_error)?;
 
-    let note = note_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    let note = note_from_row(&row).map_err(db_error)?;
     Ok(Json(note))
 }
 
@@ -520,7 +568,7 @@ pub async fn update_note(
         .bind(principal.user_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     let Some(current) = current_row else {
         return Err(AppError::NotFound);
@@ -546,9 +594,9 @@ pub async fn update_note(
     .bind(principal.user_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?;
+    .map_err(db_error)?;
 
-    let note = note_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    let note = note_from_row(&row).map_err(db_error)?;
     Ok(Json(note))
 }
 
@@ -563,7 +611,7 @@ pub async fn delete_note(
         .bind(principal.user_id)
         .execute(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound);
@@ -627,13 +675,13 @@ pub async fn list_ideas(
         .bind(principal.user_id)
         .fetch_all(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     let ideas = rows
         .iter()
         .map(idea_from_row)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
     Ok(Json(ideas))
 }
 
@@ -657,9 +705,9 @@ pub async fn create_idea(
     .bind(description)
     .fetch_one(pool)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?;
+    .map_err(db_error)?;
 
-    let idea = idea_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    let idea = idea_from_row(&row).map_err(db_error)?;
     Ok(Json(idea))
 }
 
@@ -676,7 +724,7 @@ pub async fn update_idea(
         .bind(principal.user_id)
         .fetch_optional(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     let Some(current) = current_row else {
         return Err(AppError::NotFound);
@@ -700,9 +748,9 @@ pub async fn update_idea(
     .bind(principal.user_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?;
+    .map_err(db_error)?;
 
-    let idea = idea_from_row(&row).map_err(|e| AppError::Internal(e.into()))?;
+    let idea = idea_from_row(&row).map_err(db_error)?;
     Ok(Json(idea))
 }
 
@@ -712,23 +760,47 @@ pub async fn convert_idea_to_task(
     Path(id): Path<Uuid>,
 ) -> Result<Json<ConvertIdeaResponse>, AppError> {
     let pool = db_pool(&state)?;
-    let mut tx = pool
-        .begin()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    let mut tx = pool.begin().await.map_err(db_error)?;
 
     let idea_row = sqlx::query("select * from ideas where id = $1 and user_id = $2 for update")
         .bind(id)
         .bind(principal.user_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     let Some(idea_current) = idea_row else {
         return Err(AppError::NotFound);
     };
 
-    let idea_obj = idea_from_row(&idea_current).map_err(|e| AppError::Internal(e.into()))?;
+    let idea_obj = idea_from_row(&idea_current).map_err(db_error)?;
+
+    // Converting the same idea twice must not produce two tasks. The row above
+    // is held `for update`, so a concurrent second call blocks there and then
+    // arrives here seeing the committed `converted_task_id` rather than racing
+    // past it into a second insert. A double-tap on the phone is one task.
+    if let Some(existing_task_id) = idea_obj.converted_task_id {
+        let existing = sqlx::query(
+            "select id, user_id, title, description, priority, status, due_at, project, created_at, updated_at, completed_at
+             from tasks where id = $1 and user_id = $2",
+        )
+        .bind(existing_task_id)
+        .bind(principal.user_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db_error)?;
+
+        // `converted_task_id` is `on delete set null`, so a missing task here
+        // means the link was already cleared; fall through and convert again.
+        if let Some(existing) = existing {
+            let task = task_from_row(&existing).map_err(db_error)?;
+            tx.commit().await.map_err(db_error)?;
+            return Ok(Json(ConvertIdeaResponse {
+                idea: idea_obj,
+                task,
+            }));
+        }
+    }
 
     let task_row = sqlx::query(
         "insert into tasks (user_id, title, description, priority, status, project)
@@ -740,9 +812,9 @@ pub async fn convert_idea_to_task(
     .bind(idea_obj.description)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?;
+    .map_err(db_error)?;
 
-    let task_obj = task_from_row(&task_row).map_err(|e| AppError::Internal(e.into()))?;
+    let task_obj = task_from_row(&task_row).map_err(db_error)?;
 
     let updated_idea_row = sqlx::query(
         "update ideas set status = 'converted', converted_task_id = $1, updated_at = now()
@@ -754,14 +826,11 @@ pub async fn convert_idea_to_task(
     .bind(principal.user_id)
     .fetch_one(&mut *tx)
     .await
-    .map_err(|e| AppError::Internal(e.into()))?;
+    .map_err(db_error)?;
 
-    let updated_idea =
-        idea_from_row(&updated_idea_row).map_err(|e| AppError::Internal(e.into()))?;
+    let updated_idea = idea_from_row(&updated_idea_row).map_err(db_error)?;
 
-    tx.commit()
-        .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+    tx.commit().await.map_err(db_error)?;
 
     Ok(Json(ConvertIdeaResponse {
         idea: updated_idea,
@@ -780,7 +849,7 @@ pub async fn delete_idea(
         .bind(principal.user_id)
         .execute(pool)
         .await
-        .map_err(|e| AppError::Internal(e.into()))?;
+        .map_err(db_error)?;
 
     if result.rows_affected() == 0 {
         return Err(AppError::NotFound);
