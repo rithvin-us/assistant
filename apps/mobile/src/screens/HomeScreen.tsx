@@ -1,8 +1,9 @@
 /**
- * HomeScreen — Immersive Voice Interface.
+ * HomeScreen — Immersive Frameless Voice Orb.
  *
  * Features:
- * - Perfectly centered 1:1 voice orb with breathing aura rings.
+ * - Grand, frameless 320px voice orb floating seamlessly on the screen.
+ * - Zero frames, zero borders, zero box-shadow rings.
  * - Zero tap highlight / blue selection box.
  * - Dynamic, playful Claude-style process status messages ("Clauding...", "Brewing thoughts...", "Flabbergasting...", etc.).
  */
@@ -190,23 +191,22 @@ export default function HomeScreen() {
         </Tooltip>
       </Box>
 
-      {/* Main Voice Orb Container */}
+      {/* Main Voice Orb Container — Frameless & Grand (320px) */}
       <Box
         sx={{
           alignSelf: "center",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: 3.5,
+          gap: 4,
           width: "100%",
         }}
       >
         <Box
           onClick={handleOrbClick}
           sx={{
-            width: 250,
-            height: 250,
-            borderRadius: "50%",
+            width: 320,
+            height: 320,
             cursor: connection.kind === "offline" ? "not-allowed" : "pointer",
             position: "relative",
             display: "flex",
@@ -215,37 +215,19 @@ export default function HomeScreen() {
             WebkitTapHighlightColor: "transparent",
             outline: "none",
             border: "none",
-            transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
-            boxShadow:
-              currentOrbState === "listening"
-                ? "0 0 60px rgba(59, 130, 246, 0.45), 0 0 0 20px rgba(59, 130, 246, 0.12)"
-                : currentOrbState === "thinking"
-                  ? "0 0 65px rgba(147, 51, 234, 0.45), 0 0 0 22px rgba(147, 51, 234, 0.14)"
-                  : currentOrbState === "speaking"
-                    ? "0 0 60px rgba(16, 185, 129, 0.45), 0 0 0 20px rgba(16, 185, 129, 0.12)"
-                    : "0 0 40px rgba(59, 130, 246, 0.12)",
+            boxShadow: "none",
+            background: "transparent",
+            transition: "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1)",
             "&:hover": {
-              transform: "scale(1.03)",
+              transform: "scale(1.02)",
             },
             "&:active": {
-              transform: "scale(0.96)",
+              transform: "scale(0.97)",
               WebkitTapHighlightColor: "transparent",
             },
           }}
         >
-          <Box
-            sx={{
-              width: "100%",
-              height: "100%",
-              display: "flex",
-              justifyContent: "center",
-              alignItems: "center",
-              borderRadius: "50%",
-              overflow: "hidden",
-            }}
-          >
-            <Orb theme="cloud" size={240} state={currentOrbState} />
-          </Box>
+          <Orb theme="cloud" size={320} state={currentOrbState} />
         </Box>
 
         <Box sx={{ textAlign: "center", minHeight: 48, display: "flex", alignItems: "center" }}>
@@ -262,7 +244,7 @@ export default function HomeScreen() {
             }
             sx={{
               fontWeight: 600,
-              fontSize: "0.95rem",
+              fontSize: "1rem",
               letterSpacing: "0.01em",
               transition: "all 0.25s ease-in-out",
             }}
