@@ -54,6 +54,7 @@ static DB_PERMITS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(6)
 ///
 /// Connections are kept to the minimum each test needs, because a hosted pooler
 /// has a connection ceiling and the suite runs its tests in parallel.
+#[allow(dead_code)]
 async fn pool_with(max_connections: u32) -> Option<sqlx::PgPool> {
     let _ = dotenvy::dotenv();
     let url = std::env::var("DATABASE_URL")
@@ -74,6 +75,7 @@ async fn pool_with(max_connections: u32) -> Option<sqlx::PgPool> {
 /// A store plus the permit that entitles it to a connection.
 ///
 /// The permit is released when the test's binding is dropped.
+#[allow(dead_code)]
 struct TestStore {
     store: Arc<PostgresActionStore>,
     _permit: tokio::sync::SemaphorePermit<'static>,
@@ -87,6 +89,7 @@ impl std::ops::Deref for TestStore {
 }
 
 /// Returns a live store, or `None` when no database is configured.
+#[allow(dead_code)]
 async fn store() -> Option<TestStore> {
     let permit = DB_PERMITS.acquire().await.expect("semaphore open");
     let pool = pool_with(1).await?;

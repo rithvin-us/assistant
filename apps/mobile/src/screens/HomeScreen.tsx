@@ -10,14 +10,13 @@
  * is real information to put in them, not before.
  */
 
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import Box from "@mui/material/Box";
-import Fab from "@mui/material/Fab";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
 import Typography from "@mui/material/Typography";
-import MicRoundedIcon from "@mui/icons-material/MicRounded";
 import MoreHorizRoundedIcon from "@mui/icons-material/MoreHorizRounded";
+import { Orb, type OrbState } from "orb-ui";
 
 import { loadConnection, type ConnectionState } from "../api/bridge";
 import MoreSheet from "../components/MoreSheet";
@@ -31,9 +30,8 @@ const CHECKING: ConnectionState = {
 export default function HomeScreen() {
   const [connection, setConnection] = useState<ConnectionState>(CHECKING);
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [activeVoiceState, setActiveVoiceState] = useState<OrbState | null>(null);
 
-  // State is written only from the promise callback, never synchronously in the
-  // effect body; the flag stops a late response reaching an unmounted component.
   useEffect(() => {
     let cancelled = false;
     void loadConnection().then((next) => {
@@ -53,17 +51,53 @@ export default function HomeScreen() {
           ? "success.main"
           : "warning.main";
 
+  // Effective state: user state override > connection status
+  const currentOrbState: OrbState =
+    activeVoiceState ??
+    (connection.kind === "checking"
+      ? "connecting"
+      : connection.kind === "offline"
+        ? "error"
+        : "idle");
+
+  const handleOrbClick = () => {
+    if (connection.kind === "offline") return;
+    setActiveVoiceState((prev) => {
+      if (!prev || prev === "idle") return "listening";
+      if (prev === "listening") return "thinking";
+      if (prev === "thinking") return "speaking";
+      return "idle";
+    });
+  };
+
+  const getStatusText = () => {
+    switch (currentOrbState) {
+      case "connecting":
+        return "Connecting to server…";
+      case "listening":
+        return "Listening… Tap to process";
+      case "thinking":
+        return "Thinking… Tap to answer";
+      case "speaking":
+        return "Speaking… Tap to stop";
+      case "error":
+        return "Server unreachable";
+      case "idle":
+      default:
+        return "Tap to talk";
+    }
+  };
+
   return (
     <Box
       sx={{
         height: "100%",
         display: "grid",
-        // Three rows: a near-empty header, the voice button centred in whatever
-        // space is left, and a single small control at the bottom.
         gridTemplateRows: "auto 1fr auto",
         justifyItems: "center",
       }}
     >
+      {/* Header */}
       <Box
         sx={{
           width: "100%",
@@ -93,40 +127,62 @@ export default function HomeScreen() {
         </Tooltip>
       </Box>
 
+      {/* Main Voice Orb Container */}
       <Box
         sx={{
           alignSelf: "center",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
-          gap: 2.5,
+          gap: 3,
         }}
       >
-        <Fab
-          color="primary"
-          aria-label="Hold to talk"
-          disabled
+        <Box
+          onClick={handleOrbClick}
           sx={{
-            width: 132,
-            height: 132,
-            // A wide, very soft ring instead of a shadow: it reads as presence
-            // rather than as elevation, and survives the dark ground.
-            boxShadow: (t) => `0 0 0 12px ${t.palette.primary.main}14`,
-            "& svg": { fontSize: 48 },
+            p: 2.5,
+            borderRadius: "50%",
+            cursor: connection.kind === "offline" ? "not-allowed" : "pointer",
+            position: "relative",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            transition: "transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.3s ease",
+            boxShadow:
+              currentOrbState === "listening"
+                ? "0 0 50px rgba(239, 68, 68, 0.4), 0 0 0 16px rgba(239, 68, 68, 0.12)"
+                : currentOrbState === "thinking"
+                  ? "0 0 45px rgba(220, 38, 38, 0.35), 0 0 0 12px rgba(220, 38, 38, 0.1)"
+                  : currentOrbState === "speaking"
+                    ? "0 0 45px rgba(248, 113, 113, 0.35), 0 0 0 14px rgba(248, 113, 113, 0.12)"
+                    : "0 0 35px rgba(239, 68, 68, 0.15)",
+            "&:hover": {
+              transform: "scale(1.04)",
+            },
+            "&:active": {
+              transform: "scale(0.97)",
+            },
           }}
         >
-          <MicRoundedIcon />
-        </Fab>
+          <Orb theme="cloud" size={200} state={currentOrbState} />
+        </Box>
 
-        <Typography variant="body2" color="text.secondary">
-          Voice is not built yet
-        </Typography>
+        <Box sx={{ textAlign: "center", display: "flex", flexDirection: "column", gap: 1 }}>
+          <Typography
+            variant="body2"
+            color={currentOrbState === "idle" ? "text.secondary" : "error.main"}
+            sx={{ fontWeight: 600 }}
+          >
+            {getStatusText()}
+          </Typography>
+        </Box>
       </Box>
 
+      {/* Footer Drawer Button */}
       <IconButton
         aria-label="Everything else"
         onClick={() => setSheetOpen(true)}
-        sx={{ mb: 3, color: "text.disabled" }}
+        sx={{ mb: 3, color: "text.secondary" }}
       >
         <MoreHorizRoundedIcon />
       </IconButton>
