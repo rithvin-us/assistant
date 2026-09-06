@@ -226,4 +226,109 @@ mod tests {
         let slots = calculate_free_slots(&[e1], start, end, 60, 0);
         assert_eq!(slots.len(), 0);
     }
+
+    #[test]
+    fn step_17_controlled_specification_test() {
+        let start = datetime!(2026-09-07 09:00:00 UTC);
+        let end = datetime!(2026-09-07 18:00:00 UTC);
+
+        let e1 = make_event(
+            datetime!(2026-09-07 10:00:00 UTC),
+            datetime!(2026-09-07 11:00:00 UTC),
+        );
+        let e2 = make_event(
+            datetime!(2026-09-07 13:00:00 UTC),
+            datetime!(2026-09-07 15:00:00 UTC),
+        );
+        let e3 = make_event(
+            datetime!(2026-09-07 14:30:00 UTC),
+            datetime!(2026-09-07 16:00:00 UTC),
+        );
+
+        // Requested duration: 90 minutes
+        let slots = calculate_free_slots(&[e1, e2, e3], start, end, 90, 0);
+
+        // Expected:
+        // 09:00-10:00 = 60 mins (<90 -> excluded)
+        // 11:00-13:00 = 120 mins (>=90 -> included)
+        // 16:00-18:00 = 120 mins (>=90 -> included)
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].start_time, datetime!(2026-09-07 11:00:00 UTC));
+        assert_eq!(slots[0].end_time, datetime!(2026-09-07 13:00:00 UTC));
+        assert_eq!(slots[0].duration_minutes, 120);
+
+        assert_eq!(slots[1].start_time, datetime!(2026-09-07 16:00:00 UTC));
+        assert_eq!(slots[1].end_time, datetime!(2026-09-07 18:00:00 UTC));
+        assert_eq!(slots[1].duration_minutes, 120);
+    }
+
+    #[test]
+    fn adjacent_events_merge_correctly() {
+        let start = datetime!(2026-09-07 09:00:00 UTC);
+        let end = datetime!(2026-09-07 18:00:00 UTC);
+
+        let e1 = make_event(
+            datetime!(2026-09-07 10:00:00 UTC),
+            datetime!(2026-09-07 11:00:00 UTC),
+        );
+        let e2 = make_event(
+            datetime!(2026-09-07 11:00:00 UTC),
+            datetime!(2026-09-07 12:00:00 UTC),
+        );
+
+        let slots = calculate_free_slots(&[e1, e2], start, end, 60, 0);
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[0].end_time, datetime!(2026-09-07 10:00:00 UTC));
+        assert_eq!(slots[1].start_time, datetime!(2026-09-07 12:00:00 UTC));
+    }
+
+    #[test]
+    fn events_outside_range_and_spanning_boundaries() {
+        let start = datetime!(2026-09-07 09:00:00 UTC);
+        let end = datetime!(2026-09-07 18:00:00 UTC);
+
+        let e_outside_before = make_event(
+            datetime!(2026-09-07 07:00:00 UTC),
+            datetime!(2026-09-07 08:00:00 UTC),
+        );
+        let e_span_start = make_event(
+            datetime!(2026-09-07 08:30:00 UTC),
+            datetime!(2026-09-07 09:30:00 UTC),
+        );
+        let e_span_end = make_event(
+            datetime!(2026-09-07 17:30:00 UTC),
+            datetime!(2026-09-07 18:30:00 UTC),
+        );
+        let e_outside_after = make_event(
+            datetime!(2026-09-07 19:00:00 UTC),
+            datetime!(2026-09-07 20:00:00 UTC),
+        );
+
+        let slots = calculate_free_slots(
+            &[e_outside_before, e_span_start, e_span_end, e_outside_after],
+            start,
+            end,
+            60,
+            0,
+        );
+
+        // Gap from 09:30 to 17:30 = 8 hours (480 mins)
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].start_time, datetime!(2026-09-07 09:30:00 UTC));
+        assert_eq!(slots[0].end_time, datetime!(2026-09-07 17:30:00 UTC));
+        assert_eq!(slots[0].duration_minutes, 480);
+    }
+
+    #[test]
+    fn no_busy_events_and_exact_duration_slot() {
+        let start = datetime!(2026-09-07 09:00:00 UTC);
+        let end = datetime!(2026-09-07 10:30:00 UTC);
+
+        // No busy events, search 90 mins, duration 90 mins -> 1 exact slot
+        let slots = calculate_free_slots(&[], start, end, 90, 0);
+        assert_eq!(slots.len(), 1);
+        assert_eq!(slots[0].start_time, start);
+        assert_eq!(slots[0].end_time, end);
+        assert_eq!(slots[0].duration_minutes, 90);
+    }
 }
