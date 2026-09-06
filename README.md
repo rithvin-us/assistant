@@ -6,18 +6,30 @@
 
 A voice-first personal assistant. Rust backend, Tauri 2 + React mobile app, PostgreSQL.
 
-**Status: Milestone 1 Complete — Prepared for Milestone 2 (Assistant Core).**
-The repository structure, 7 Rust workspace crates, Axum HTTP/WS server, Tauri 2 mobile client, Material UI light theme, and security boundaries are audited, hardened, and verified.
+**Status: Milestone 4 complete — a real assistant that holds a conversation.**
 
 ## What works today
 
-- Rust workspace of 7 crates, building clean under `clippy -D warnings`.
-- Axum server with `GET /v1/health` and `WS /v1/conversation/{id}/stream`.
-- Tauri 2 app with Material UI light theme shell that probes the server and reports status.
-- Local SQLite cache opened at startup.
-- 9 tests (unit + integration tests) passing 100% over real HTTP and WebSocket transports.
-- Complete documentation audit in [`docs/MILESTONE-1-AUDIT.md`](docs/MILESTONE-1-AUDIT.md) and domain specification in [`docs/DOMAIN.md`](docs/DOMAIN.md).
-- CI running format, clippy, tests, typecheck, lint, build, and secret scanning.
+- **A real Anthropic model provider** behind the vendor-neutral `ModelProvider`
+  trait, feature-gated so `assistant-core` cannot link or name it. Responses
+  stream token by token from the API all the way to the phone.
+- **Conversations persist in PostgreSQL.** Tell it your name, ask for it two
+  turns later, restart the server, ask again — the history is read back from the
+  database, scoped to the authenticated user in the SQL itself.
+- **The Android APK connects to the server** over an authenticated WebSocket and
+  renders the answer as it arrives. No provider credential is in the bundle: the
+  phone talks to this server, and this server talks to the provider.
+- Durable approvals, executions and an audit trail (M3), with the permission
+  seam the model cannot reach (ADR-0005).
+- A deterministic fast path that answers what code already knows without calling
+  a model at all.
+- CI running format, clippy, tests, typecheck, lint, build and secret scanning —
+  and depending on no external AI API.
+
+**Not built yet:** Gmail, Calendar, Drive, tasks, reminders, long-term memory,
+speech recognition and text-to-speech. Authentication is still a development
+bearer token. See [`docs/MILESTONE-4.md`](docs/MILESTONE-4.md) for the full list
+of what is deferred and why.
 
 ## Layout
 
@@ -50,7 +62,11 @@ pnpm --dir apps/mobile tauri dev         # terminal 2
 ```
 
 Home shows **Degraded** when the server is up but has no database — that is the
-expected state until you set `DATABASE_URL`.
+expected state until you set `DATABASE_URL` and run `pwsh scripts/migrate.ps1`.
+
+Without `ANTHROPIC_API_KEY` the server still runs: the deterministic path
+answers, and anything that needs a model returns a clear "no model provider is
+configured" rather than a fabricated reply.
 
 Full setup, Android instructions and the check commands are in
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md).
@@ -59,6 +75,9 @@ Full setup, Android instructions and the check commands are in
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — layers, dependency rules,
   request paths, what is deliberately absent.
+- [`docs/MILESTONE-4.md`](docs/MILESTONE-4.md) — the Anthropic provider,
+  streaming end to end, conversation persistence, the context-window policy,
+  API-key security, testing, and known limitations.
 - [`docs/MILESTONE-3.md`](docs/MILESTONE-3.md) — durable actions: lifecycle,
   schema, state machines, idempotency, transactions, expiry, security boundaries.
 - [`docs/MILESTONE-2.md`](docs/MILESTONE-2.md) — the orchestrator: lifecycle,
@@ -77,4 +96,8 @@ trusted local network. See ADR-0009.
 
 Secrets live in `.env` files, which are git-ignored; CI fails if one is ever
 tracked. OAuth client secrets and provider API keys belong on the server and must
-never be shipped in the mobile bundle.
+never be shipped in the mobile bundle — `VITE_*` variables are inlined into the
+shipped Android bundle, so there is deliberately no `VITE_ANTHROPIC_API_KEY` and
+must never be one. `ANTHROPIC_API_KEY` is read in one place, redacted in every
+`Debug`, and never reaches a protocol frame, a database row or an error message.
+See ADR-0020.

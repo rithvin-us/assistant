@@ -51,9 +51,24 @@ RUST_LOG=assistant_server=debug,tower_http=debug,info
 # Database (Supabase Session Pooler on port 5432)
 DATABASE_URL=postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres
 
-# Runtime Model Credentials (Server only)
+# Model provider. SERVER ONLY -- read by Config::from_env and nowhere else.
+# Leave unset to run without a provider: the deterministic path still answers
+# and a turn that needs a model fails with `no_model_provider`.
 # ANTHROPIC_API_KEY=sk-ant-api03-...
+ASSISTANT_MODEL=claude-opus-5
+ASSISTANT_MODEL_MAX_OUTPUT_TOKENS=4096
+ASSISTANT_MODEL_TIMEOUT_MS=60000
+ASSISTANT_MODEL_EFFORT=low
+ASSISTANT_CONTEXT_MAX_MESSAGES=40
 ```
+
+Every variable above is documented in `.env.example`. The four
+`ASSISTANT_MODEL_*` values and `ASSISTANT_CONTEXT_MAX_MESSAGES` have working
+defaults; only `DEV_AUTH_TOKEN` is required.
+
+> **Never add `VITE_ANTHROPIC_API_KEY`.** Vite inlines `VITE_*` variables into
+> the shipped Android bundle, so a provider key there ships to every device. The
+> phone talks to this server; this server talks to the provider. See ADR-0020.
 
 ### 2. Mobile Client Environment (`apps/mobile/.env`)
 
@@ -135,14 +150,41 @@ pwsh scripts/migrate.ps1
 
 ---
 
-## Durable Action Tests
+## Database-backed tests
 
-Run PostgreSQL durable actions test suite:
+Both suites skip, rather than fail, when `DATABASE_URL` is absent, so
+`cargo test --workspace` stays runnable without credentials.
 
 ```powershell
 $env:DATABASE_URL = "postgresql://postgres.<ref>:<password>@aws-0-<region>.pooler.supabase.com:5432/postgres"
+
+# Approvals, executions and audit (M3).
 cargo test -p assistant-server --test durable_actions
+
+# Conversation history: ordering, ownership, schema constraints, and survival
+# across a restart (M4).
+cargo test -p assistant-server --test conversations
 ```
+
+---
+
+## Live Anthropic smoke test
+
+One real, billable request. `#[ignore]`d so `cargo test --workspace` compiles it
+and never runs it — CI must not depend on an external AI API.
+
+```powershell
+$env:ANTHROPIC_API_KEY = "sk-ant-api03-..."   # or set it in .env
+cargo test -p assistant-models --test live_anthropic -- --ignored --nocapture
+```
+
+It sends one trivial prompt with a 64-token output cap, asserts the response
+streamed and answered the prompt, and asserts no tool call occurred on a turn
+that offered no tools. It prints token counts and the answer; it prints no part
+of the credential.
+
+Every other test — including all 21 Anthropic provider tests — runs against a
+local socket speaking canned HTTP and needs no key, no network and no account.
 
 ---
 
@@ -159,3 +201,6 @@ pnpm --dir apps/mobile typecheck
 pnpm --dir apps/mobile lint
 pnpm --dir apps/mobile build
 ```
+
+`cargo test --workspace` needs no database and no API key. The suites that do
+are listed above and skip without their credential.

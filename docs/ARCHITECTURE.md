@@ -39,10 +39,16 @@ server and the Tauri shell to share.
 
 `assistant-core` must never depend on a concrete integration or a concrete model
 provider. Gmail, Calendar and Drive will be *implementations of tool traits* that
-live in `assistant-tools`; Claude and Gemini will be *implementations of
-`ModelProvider`* that live in `assistant-models`. The core depends on the traits.
-This is what allows a provider to be swapped for cost or latency reasons without
-touching orchestration — see ADR-0003.
+live in `assistant-tools`; providers are *implementations of `ModelProvider`*
+that live in `assistant-models`. The core depends on the traits. This is what
+allows a provider to be swapped for cost or latency reasons without touching
+orchestration — see ADR-0003.
+
+This is now load-bearing rather than aspirational: `assistant-models::anthropic`
+exists, behind a non-default `anthropic` cargo feature. `assistant-core` depends
+on `assistant-models` with no features, so it does not link `reqwest`, cannot
+name `AnthropicModelProvider`, and cannot see an Anthropic type. The server
+enables the feature; the core cannot. See ADR-0018.
 
 ## Why each crate exists
 
@@ -50,15 +56,22 @@ touching orchestration — see ADR-0003.
 |---|---|
 | `assistant-protocol` | Shared by the server and the Tauri shell. Must not pull server dependencies into the mobile binary. |
 | `assistant-core` | Owns the orchestrator: normalisation, context, routing, the bounded tool loop, permission evaluation, streaming. Kept free of integrations and providers so that rule is compiler-enforced. |
-| `assistant-models` | Provider implementations will be feature-gated. Separating them keeps unused vendor SDKs out of the build. |
+| `assistant-models` | Provider implementations are feature-gated. The vendor-neutral vocabulary is always compiled; `anthropic` is not, so a build that does not use it does not link it. |
 | `assistant-tools` | The risk/permission vocabulary must be usable by policy code that has no business depending on orchestration. |
 | `assistant-auth` | Auth is consumed by the server middleware and, later, by the desktop agent's connection handshake. |
 | `assistant-memory` | Memory has its own lifecycle and retention rules; keeping it separate stops conversation logging from quietly becoming memory. |
 
-Durable action storage follows the same rule as model providers: `assistant-core`
-declares the `ActionStore` trait and the atomicity it needs; the `sqlx`
-implementation lives in `assistant-server`, which already owns the pool. The core
-does not know Postgres exists.
+Durable storage follows the same rule as model providers: `assistant-core`
+declares the trait and the safety it needs; the `sqlx` implementation lives in
+`assistant-server`, which already owns the pool. The core does not know Postgres
+exists. Two traits follow this shape — `ActionStore` (approvals, executions,
+audit; ADR-0014) and `ConversationStore` (conversation history; ADR-0021).
+
+For conversations the trait also carries a *security* obligation, not only a
+storage one: every method takes the authenticated principal, and an
+implementation must scope its SQL by it rather than filtering after the read. A
+conversation belonging to another principal must be indistinguishable from one
+that does not exist.
 
 ## Request paths
 
@@ -85,6 +98,18 @@ webview → tauri command → WS /v1/conversation/{id}/stream
 Assistant output is a stream of deltas terminated by `TurnEnd`. That shape was
 chosen so adding streamed audio and barge-in later needs new enum variants, not a
 new transport.
+
+With a real provider, that stream runs the whole way through without buffering:
+
+```
+Anthropic SSE → SseDecoder → StreamChunk → TurnEvent::AssistantDelta
+             → ServerFrame::AssistantDelta → WebSocket → Tauri shell → React
+```
+
+`assistant-core` never sees an SSE event, and the shell forwards frames verbatim
+so `apps/mobile/src/api/types.ts` stays the single mirror of the wire contract.
+Dropping the chunk stream drops the HTTP body, so cancelling a turn stops the
+provider generating — the existing `CancellationToken` is the whole mechanism.
 
 The Axum handler is transport glue only: it builds a `TurnRequest`, forwards
 `TurnEvent`s, and writes frames. `assistant-core` has never heard of a WebSocket;
@@ -172,3 +197,10 @@ No Redis, no Kafka, no Neo4j, no Elasticsearch, no Temporal, no Kubernetes. Each
 would be justifiable in a system with more traffic or more operators; here each
 would be cost and operational surface with no corresponding benefit. Postgres
 covers relational data, job scheduling and — via pgvector — semantic retrieval.
+
+Also absent, and not an oversight: a memory system. Conversation history is
+durable (ADR-0021), and it is a log of what was said in one conversation.
+Nothing promotes it to a durable fact about the user, scores importance, embeds
+or retrieves semantically. That is a separate system with its own retention and
+correction rules, and conflating the two is the mistake `assistant-memory`
+exists as a separate crate to prevent.

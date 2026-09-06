@@ -265,6 +265,11 @@ change is a separate commit.
 
 ## ADR-0011 — Milestone 2 orchestration keeps no persistent state
 
+> Superseded in part. The approval and audit half was answered by ADR-0014; the
+> conversation half by ADR-0021, once a real model provider made an assistant
+> that forgets the previous sentence untenable. The reasoning below still stands
+> for why neither was built earlier.
+
 **Context.** The orchestrator now runs turns, evaluates permissions and stops for
 approval. Three things could plausibly need a database: conversation identity,
 approval requests, and an audit trail of tool executions.
@@ -504,3 +509,240 @@ away its audit record.
 Approval *expiry* is a different thing and is implemented: it is enforced on the
 write path in `claim_approval`, so an approval cannot become executable again
 because a sweeper failed to run.
+
+---
+
+## ADR-0018 — The Anthropic provider is a small explicit client, behind a feature
+
+**Context.** Milestone 4 needs a real `ModelProvider`. Two things had to be
+decided: what the provider is written with, and where it lives so that ADR-0003
+("the core depends on model interfaces, never on providers") still holds once a
+provider actually exists.
+
+**Options.**
+1. Depend on an official Anthropic SDK from `assistant-models`.
+2. Write a small `reqwest` client for the surface this application uses.
+3. Put the provider in a new crate, `assistant-anthropic`.
+
+**Chosen.** Option 2, in `assistant-models::anthropic`, behind a non-default
+`anthropic` cargo feature.
+
+**Reason.** The surface needed is one endpoint, one streaming format and one
+error shape. `reqwest` is already the project's HTTP dependency, declared once
+in `[workspace.dependencies]`, and is already compiled for Android by the Tauri
+shell — so the provider costs no new dependency and no new cross-compilation
+risk. An SDK would add a large dependency to buy a wrapper over `POST
+/v1/messages`.
+
+A separate crate was rejected because the feature flag already provides the
+property that matters. `assistant-core` depends on `assistant-models` with no
+features, so it does not link `reqwest`, cannot name `AnthropicModelProvider`,
+and cannot see an Anthropic type. A crate boundary would restate that at the
+cost of another manifest.
+
+The boundary is enforced by what crosses it. `wire.rs` and `sse.rs` translate in
+both directions; nothing above the provider sees a content block, an SSE event
+or an HTTP status, and nothing inside it sees a `TurnEvent`, a `Principal` or a
+`RiskLevel`.
+
+**Consequences.** When the API adds a feature this application wants, the change
+is in this module and nowhere else. When the API adds something it does *not*
+want, nothing happens: responses are parsed leniently, so a new content-block
+type — a thinking block, a server-tool result — is ignored rather than treated
+as a malformed response.
+
+The cost is that this build owns its API compatibility. `anthropic-version:
+2023-06-01` is sent on every request so a server-side change cannot silently
+alter the response shape, and the provider tests replay recorded wire bytes
+rather than trusting a library to be right.
+
+Tool declarations are generated from the registry's `ToolSpec`s, and carry only
+`name`, `description` and `input_schema`. `risk`, `required_scopes` and
+`timeout_ms` deliberately do not cross: they are the server's business, and
+telling the model about them would invite it to argue about them (ADR-0005).
+
+---
+
+## ADR-0019 — A model call is retried only for transport failures, never with tool results attached
+
+**Context.** Network calls fail. The reflex is a retry policy, but a model call
+is not an idempotent GET: it costs money every time, and in a turn that has
+already executed tools it can lead to consequential work being done twice.
+
+**Options.**
+1. No retries. A transport failure fails the turn.
+2. Retry any retryable-looking failure with backoff, as a general HTTP client
+   would.
+3. Retry only where a retry provably repeats nothing.
+
+**Chosen.** Option 3: at most `ASSISTANT_MODEL_TIMEOUT`-bounded attempts —
+one retry by default — for timeouts, connection failures and 5xx, and only when
+the request carries no tool results. Rate limits (429) are surfaced, not
+retried. Once a stream has delivered bytes to the caller, nothing is retried.
+
+**Reason.** A request with no tool results is a pure question: if it failed at
+the transport, nothing happened and nothing was billed, so resending is free of
+consequence. A request carrying tool results belongs to a turn that has already
+run something. Re-asking the model there is not itself dangerous, but the
+model's next move could be to request the same write again, and the honest
+answer is to fail cleanly and let the user decide.
+
+Retrying mid-stream is refused for a different reason: the user has already seen
+text. Replaying the request would duplicate it on screen.
+
+429 is not retried automatically because the provider's own `retry-after` can be
+long, and silently holding a turn open for it is worse than telling the user the
+assistant is busy. The value is carried on the error for a future caller that
+has a reason to use it.
+
+**Consequences.** A flaky connection costs one extra request at most. A rate
+limit is visible to the user immediately. Nothing above the provider retries a
+model call at all — the orchestrator has no retry path, because by the time it
+sees a failure the turn may already have side effects.
+
+---
+
+## ADR-0020 — The provider credential is read once, in the server's configuration layer
+
+**Context.** `ANTHROPIC_API_KEY` is the first credential in this system that
+buys something on the user's behalf. Where it is read, and what can observe it,
+had to be decided before a provider existed to use it.
+
+**Options.**
+1. Read the environment inside the provider, where it is used.
+2. Read it in the server's `Config`, and pass it to the provider as a value.
+3. Read it in the server and pass it to the mobile client for direct calls.
+
+**Chosen.** Option 2.
+
+**Reason.** `Config` already exists as the one place the process reads its
+environment, and it already has a hand-written `Debug` whose entire purpose is
+that adding a secret without redacting it is a visible omission. Reading the
+environment in the provider would create a second such place, and
+`assistant-models` has no `Debug` discipline of its own to inherit.
+
+Option 3 is the one that matters to rule out explicitly. If the phone called the
+provider directly, the key would ship in the APK — `VITE_*` variables are
+inlined into the bundle — and permission evaluation, audit and the tool registry
+would all be on the wrong side of the boundary. The phone talks to this server;
+this server talks to the provider.
+
+**Consequences.** The key exists in exactly three places at runtime: the
+process environment, `Config`, and the private field of `AnthropicConfig`. It is
+redacted in both `Debug` impls. It is sent as `x-api-key` and never as
+`Authorization`, so the header-scrubbing the request logger already does for
+query strings is not the only thing standing between it and a log line. No
+tracing span in the provider records a header, and provider errors are
+constructed from a status line and a parsed error body — never from the request
+that was sent — so there is no code path by which the key can reach an error
+message.
+
+A deployment with no key is supported and reported, not fatal: the deterministic
+path still answers and a turn that needs a model fails with `no_model_provider`
+rather than a fabricated reply.
+
+---
+
+## ADR-0021 — Conversation history is durable, and is not memory
+
+**Context.** ADR-0011 recorded that Milestone 2 kept no persistent conversation
+state, because nothing then implemented needed to outlive the process. A real
+model provider changes that: an assistant that forgets the previous sentence is
+not an assistant. This record supersedes ADR-0011's conclusion about
+conversation identity.
+
+**Options.**
+1. Keep history in memory, keyed by conversation id.
+2. Persist conversations and messages in Postgres.
+3. Persist, and additionally extract durable facts about the user as they are
+   mentioned.
+
+**Chosen.** Option 2. Migration 0003 adds `messages`; `conversations` already
+existed from 0001 and is reused, as is the conversation id the WebSocket
+already carries.
+
+**Reason.** Option 1 fails the requirement it exists to meet: a restart, a
+deploy or a crash silently erases the conversation, and the user finds out by
+being asked their name again. It is also the option that quietly becomes the
+source of truth for something that has to be right.
+
+Option 3 is Milestone 8, and conflating it with this is the mistake this record
+is written to prevent. "My name is Alex" said in a conversation is a fact *in
+that conversation*. Promoting it to a durable fact about the user is a different
+decision, with different consequences when it is wrong, and it needs its own
+retention policy, its own review surface and its own way to be corrected. No
+importance scoring, embedding, semantic retrieval or extraction exists here.
+
+**Storage boundary.** A message row holds exactly what was said, because
+replaying the conversation is the point of the table. That makes it the most
+sensitive table in the database — and it is the reason `audit_events`
+(ADR-0016) holds none of it: audit rows are written by generic code that cannot
+tell a calendar title from an email body, whereas these rows are only ever read
+back to the one principal who owns them.
+
+Roles are `user`, `assistant` and `tool`, not flattened into prose. A tool
+result keeps the id of the call it answers, and tool calls are a structured
+field beside `content` rather than English encoded into it, so reconstruction
+never depends on parsing. Two CHECK constraints hold what the application would
+otherwise have to remember: a tool result must name its call, and only an
+assistant turn may carry tool calls — a user-supplied tool call is the shape an
+injection attempt would take.
+
+**Ownership** is enforced in SQL, not after the read. Every statement selects
+the conversation by `(id, user_id)` or joins on it, so there is no code path
+that fetches a row and checks the owner afterwards — the shape of check people
+forget to write. A conversation belonging to somebody else is indistinguishable
+from one that does not exist, and an id that exists under another owner is never
+silently re-parented.
+
+**Consequences.** History survives a restart, which is tested against a real
+database by dropping the pool and the orchestrator and reading back through new
+ones. A failed turn persists the question and no answer: an answer that was
+never delivered must not appear in history as though it had been. There is no
+failure-state column on a message, so a turn that fails mid-stream leaves the
+question with nothing after it — that is the honest record, and a richer one can
+be added when something reads it.
+
+---
+
+## ADR-0022 — Context is a bounded window of recent turns
+
+**Context.** With durable history, something has to decide how much of it is
+sent to the model each turn. Every message replayed is paid for on every
+subsequent turn, so this is a cost decision before it is a quality one.
+
+**Options.**
+1. Send the whole conversation.
+2. Send a bounded window of recent messages.
+3. Summarise older history with a second model call.
+
+**Chosen.** Option 2: the most recent messages, subject to two independent
+bounds — a message count (`ASSISTANT_CONTEXT_MAX_MESSAGES`, 40 by default) and a
+character budget — with the budget spent from the newest end.
+
+**Reason.** Two bounds because either alone is escapable: a message count says
+nothing about a conversation of enormous messages, and a character budget alone
+would happily replay a thousand tiny ones. The bound is applied in the SQL as
+well as in the window, so a long conversation is never fully read just to be
+sliced in Rust.
+
+Option 3 is rejected for this milestone: it makes a conversational turn cost two
+model calls, and a summary is a lossy artefact that has to be stored,
+invalidated and shown to somebody when it is wrong. It is not obviously needed
+before the window is demonstrably too small.
+
+**What is not replayed.** Tool results from *earlier* turns. Within the turn
+that produced it, a tool result is in the message list the orchestrator builds;
+replaying a stale one invites the model to treat last week's inbox as current.
+The record still exists in the store — it simply is not context.
+
+The system prompt is not history either. It travels in
+`GenerateRequest::system_prompt` and is assembled per request from a server
+constant, so it cannot be trimmed away by the window and cannot be supplied by a
+client.
+
+**Consequences.** A long conversation loses its oldest turns rather than getting
+slower and more expensive without limit. Something said forty messages ago is
+forgotten, which is the correct behaviour for a conversation log and the wrong
+behaviour for memory — which is exactly why memory is a separate system
+(ADR-0021).

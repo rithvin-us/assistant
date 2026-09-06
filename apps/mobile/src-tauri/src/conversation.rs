@@ -31,7 +31,9 @@ enum Status {
     /// The socket ended. `reason` is a short, user-safe phrase -- never a
     /// transport error string, which can contain the URL and therefore the
     /// access token that is carried in its query string.
-    Closed { reason: String },
+    Closed {
+        reason: String,
+    },
 }
 
 /// The live connection, if there is one.
