@@ -255,7 +255,10 @@ impl ApprovalCoordinator {
         }
 
         // The one execution path. Approval changed only whether we got here.
-        let result = self.executor.run_authorized(&call, &spec, cancel).await;
+        let result = self
+            .executor
+            .run_authorized_with_user(&call, &spec, Some(execution.principal_id), cancel)
+            .await;
 
         let (status, outcome_json, ok) = match result {
             Ok(tool_result) => match tool_result.result {

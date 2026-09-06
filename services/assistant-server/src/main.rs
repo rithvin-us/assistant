@@ -6,9 +6,13 @@
 
 use std::sync::Arc;
 
-use assistant_core::{DomainEvent, EventBus};
+use assistant_core::{DomainEvent, EventBus, ToolRegistry};
 use assistant_models::ModelProvider;
 use assistant_server::{app, config::Config, db};
+use assistant_tools::{
+    CalendarCreateTool, CalendarDeleteTool, CalendarListTool, CalendarSearchTool,
+    CalendarUpdateTool, GmailReadTool, GmailSearchTool,
+};
 use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[tokio::main]
@@ -96,15 +100,36 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
-    // Tools stay empty on purpose. Registering a placeholder would advertise a
-    // capability that does not exist; real tools arrive with the integration
-    // milestones that implement them.
+    let mut tool_registry = ToolRegistry::new();
+    if let Some(ref pool_ref) = pool {
+        let http = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .build()
+            .unwrap_or_default();
+        let google_client = Arc::new(assistant_server::google::GoogleClient::new(
+            pool_ref.clone(),
+            http,
+            config.google_client_id.clone(),
+            config.google_client_secret.clone(),
+            config.resolved_encryption_key(),
+        ));
+        tool_registry.register(Arc::new(GmailSearchTool::new(google_client.clone())));
+        tool_registry.register(Arc::new(GmailReadTool::new(google_client.clone())));
+        tool_registry.register(Arc::new(CalendarListTool::new(google_client.clone())));
+        tool_registry.register(Arc::new(CalendarSearchTool::new(google_client.clone())));
+        tool_registry.register(Arc::new(CalendarCreateTool::new(google_client.clone())));
+        tool_registry.register(Arc::new(CalendarUpdateTool::new(google_client.clone())));
+        tool_registry.register(Arc::new(CalendarDeleteTool::new(google_client.clone())));
+        tracing::info!("registered Google tools (gmail.*, calendar.*)");
+    }
+
     let router = app(
         &config,
         pool,
         events.clone(),
         assistant_server::orchestration::Dependencies {
             model,
+            tools: Arc::new(tool_registry),
             store,
             conversations,
             ..Default::default()

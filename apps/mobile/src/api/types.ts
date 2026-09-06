@@ -8,7 +8,7 @@
  */
 
 /** Must equal `assistant_protocol::PROTOCOL_VERSION`. */
-export const PROTOCOL_VERSION = 3;
+export const PROTOCOL_VERSION = 4;
 
 export type HealthStatus = "ok" | "degraded";
 
@@ -110,6 +110,33 @@ export type ServerFrame =
   | { type: "turn_end"; message_id: string }
   | { type: "error"; code: string; message: string };
 
+/** A user-owned project. Mirrors `assistant_protocol::ProjectItem`. */
+export interface ProjectItem {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string;
+  /**
+   * The one project per user that a task with no stated project falls back to,
+   * and the one project that cannot be deleted. Flagged on the row rather than
+   * matched by name, because the name is the user's to change.
+   */
+  is_inbox: boolean;
+  position: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** A user-owned label, shared by tasks and notes. Mirrors `LabelItem`. */
+export interface LabelItem {
+  id: string;
+  user_id: string;
+  name: string;
+  color: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface TaskItem {
   id: string;
   user_id: string;
@@ -118,10 +145,24 @@ export interface TaskItem {
   priority: "P1" | "P2" | "P3" | "P4" | string;
   status: "todo" | "completed" | "archived" | string;
   due_at: string | null;
+  project_id: string;
+  /**
+   * Resolved from `projects.name` by the server. A read projection, not a
+   * stored column: to move a task, send `project_id` or `project` on the write
+   * rather than mutating this in place.
+   */
   project: string;
+  /** Resolved label names, sorted. Same projection rule as `project`. */
+  labels: string[];
+  estimated_minutes?: number | null;
   created_at: string;
   updated_at: string;
   completed_at: string | null;
+  /**
+   * True while the item is only in the local outbox and has not been
+   * acknowledged by the server. Client-side, never sent. See ADR-0029.
+   */
+  pending?: boolean;
 }
 
 export interface ReminderItem {
@@ -133,6 +174,7 @@ export interface ReminderItem {
   status: "pending" | "handled" | "cancelled" | string;
   created_at: string;
   updated_at: string;
+  pending?: boolean;
 }
 
 export interface NoteItem {
@@ -141,9 +183,11 @@ export interface NoteItem {
   title: string;
   content: string;
   is_archived: boolean;
+  /** Resolved label names. Backed by `labels` + `note_labels` since ADR-0028. */
   tags: string[];
   created_at: string;
   updated_at: string;
+  pending?: boolean;
 }
 
 export interface IdeaItem {
@@ -155,5 +199,80 @@ export interface IdeaItem {
   converted_task_id: string | null;
   created_at: string;
   updated_at: string;
+  pending?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// Google Ecosystem & Schedule Foundation Types
+// ---------------------------------------------------------------------------
+
+export interface AccountSummary {
+  id: string;
+  user_id: string;
+  provider: string;
+  provider_account_id: string;
+  email: string;
+  display_name?: string | null;
+  scopes: string[];
+  status: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EmailSummary {
+  id: string;
+  account_id: string;
+  thread_id: string;
+  from: string;
+  to: string[];
+  subject: string;
+  date?: string | null;
+  snippet: string;
+  is_unread: boolean;
+}
+
+export interface EmailDetail {
+  id: string;
+  account_id: string;
+  thread_id: string;
+  from: string;
+  to: string[];
+  subject: string;
+  date?: string | null;
+  body_text: string;
+  is_unread: boolean;
+}
+
+export interface CalendarEvent {
+  id: string;
+  account_id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  description?: string | null;
+  location?: string | null;
+  all_day: boolean;
+}
+
+export interface CreateCalendarEvent {
+  account_id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  description?: string;
+  location?: string;
+}
+
+export interface UpdateCalendarEvent {
+  title?: string;
+  start_time?: string;
+  end_time?: string;
+  description?: string;
+  location?: string;
+}
+
+export interface FreeSlot {
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+}

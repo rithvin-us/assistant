@@ -191,6 +191,15 @@ guards exist already — `Config`'s hand-written `Debug` redacts every secret, a
 HTTP request logging omits query strings so a WebSocket `access_token` parameter
 cannot reach the logs.
 
+## Google Ecosystem & Personal Schedule (Milestone 5)
+
+Google integration is implemented strictly behind provider-neutral interfaces (`GmailProvider`, `CalendarProvider` in `assistant-tools`) ensuring `assistant-core` never links Google SDKs.
+
+- **Multi-Account Ownership:** An arbitrary number of Google accounts are supported, each isolated by `(id, user_id)` at the database query layer (ADR-0026).
+- **Encrypted Credential Storage:** OAuth tokens are encrypted at rest using AES-256-GCM (ADR-0025) and refreshed server-side.
+- **Risk Level Enforcement:** Read operations are Green; Calendar create/update are Yellow; Calendar deletion is Orange (ADR-0005, ADR-0009), requiring explicit human approval.
+- **Deterministic Free-Time Engine:** Interval arithmetic computes available schedule slots without calling an LLM (ADR-0027).
+
 ## What is deliberately absent
 
 No Redis, no Kafka, no Neo4j, no Elasticsearch, no Temporal, no Kubernetes. Each

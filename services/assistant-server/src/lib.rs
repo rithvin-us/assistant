@@ -6,8 +6,10 @@
 pub mod auth;
 pub mod config;
 pub mod conversations;
+pub mod crypto;
 pub mod db;
 pub mod error;
+pub mod google;
 pub mod orchestration;
 pub mod prompt;
 pub mod routes;
@@ -53,11 +55,21 @@ pub fn app(
         Some(project_ref) => Arc::new(SupabaseJwtVerifier::for_project(project_ref, http.clone())),
         None => {
             tracing::warn!(
-                "SUPABASE_PROJECT_REF is unset; falling back to the development                  bearer token, which authenticates every caller as one fixed user"
+                "SUPABASE_PROJECT_REF is unset; falling back to the development bearer token, which authenticates every caller as one fixed user"
             );
             Arc::new(DevTokenVerifier::new(config.dev_auth_token.clone()))
         }
     };
+
+    let google = db.as_ref().map(|pool| {
+        Arc::new(crate::google::GoogleClient::new(
+            pool.clone(),
+            http.clone(),
+            config.google_client_id.clone(),
+            config.google_client_secret.clone(),
+            config.resolved_encryption_key(),
+        ))
+    });
 
     let state = Arc::new(AppState {
         verifier,
@@ -69,6 +81,8 @@ pub fn app(
         openai_api_key: config.openai_api_key.clone(),
         openai_transcription_model: config.openai_transcription_model.clone(),
         openai_transcription_language: config.openai_transcription_language.clone(),
+        google,
+        google_redirect_uri: config.google_redirect_uri.clone(),
     });
 
     let origins: Vec<HeaderValue> = config

@@ -60,11 +60,18 @@ ASSISTANT_MODEL_MAX_OUTPUT_TOKENS=4096
 ASSISTANT_MODEL_TIMEOUT_MS=60000
 ASSISTANT_MODEL_EFFORT=low
 ASSISTANT_CONTEXT_MAX_MESSAGES=40
+
+# Google Ecosystem & Credential Encryption (Milestone 5)
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-...
+GOOGLE_REDIRECT_URI=http://localhost:8787/api/google/oauth/callback
+CREDENTIAL_ENCRYPTION_KEY=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 ```
 
 Every variable above is documented in `.env.example`. The four
 `ASSISTANT_MODEL_*` values and `ASSISTANT_CONTEXT_MAX_MESSAGES` have working
-defaults; only `DEV_AUTH_TOKEN` is required.
+defaults; only `DEV_AUTH_TOKEN` is required. `CREDENTIAL_ENCRYPTION_KEY` falls
+back to a deterministic development key with a warning if not set.
 
 > **Never add `VITE_ANTHROPIC_API_KEY`.** Vite inlines `VITE_*` variables into
 > the shipped Android bundle, so a provider key there ships to every device. The

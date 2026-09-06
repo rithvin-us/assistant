@@ -1,26 +1,47 @@
 //! HTTP and WebSocket routing.
 //!
-//! Routes are grouped by whether they need authentication. Only `/v1/health` is
-//! public, so a device can diagnose connectivity before it has a token.
+//! Routes are grouped by whether they need authentication. Only `/v1/health` and
+//! the OAuth callback are public.
 
 pub mod conversation;
+pub mod google;
 pub mod health;
 pub mod productivity;
 pub mod transcribe;
 
 use axum::{
     Router, middleware,
-    routing::{get, patch, post},
+    routing::{delete, get, patch, post},
 };
 
 use crate::{auth, state::SharedState};
 
 pub fn router(state: SharedState) -> Router {
-    let public = Router::new().route("/v1/health", get(health::health));
+    let public = Router::new()
+        .route("/v1/health", get(health::health))
+        .route("/v1/auth/google/callback", get(google::oauth_callback));
 
     let protected = Router::new()
         .route("/v1/conversation/{id}/stream", get(conversation::stream))
         .route("/v1/audio/transcribe", post(transcribe::transcribe))
+        // Projects
+        .route(
+            "/v1/projects",
+            get(productivity::list_projects).post(productivity::create_project),
+        )
+        .route(
+            "/v1/projects/{id}",
+            patch(productivity::update_project).delete(productivity::delete_project),
+        )
+        // Labels
+        .route(
+            "/v1/labels",
+            get(productivity::list_labels).post(productivity::create_label),
+        )
+        .route(
+            "/v1/labels/{id}",
+            patch(productivity::update_label).delete(productivity::delete_label),
+        )
         // Tasks
         .route(
             "/v1/tasks",
@@ -60,6 +81,30 @@ pub fn router(state: SharedState) -> Router {
         .route(
             "/v1/ideas/{id}/convert",
             post(productivity::convert_idea_to_task),
+        )
+        // Google OAuth & Multi-Accounts
+        .route("/v1/auth/google/start", post(google::start_oauth))
+        .route("/v1/auth/google/exchange", post(google::exchange_oauth))
+        .route("/v1/google/accounts", get(google::list_accounts))
+        .route(
+            "/v1/google/accounts/{id}",
+            delete(google::disconnect_account),
+        )
+        // Gmail
+        .route("/v1/google/gmail/search", get(google::search_gmail))
+        .route("/v1/google/gmail/messages/{id}", get(google::read_gmail))
+        // Calendar & Schedule
+        .route(
+            "/v1/google/calendar/events",
+            get(google::list_calendar_events).post(google::create_calendar_event),
+        )
+        .route(
+            "/v1/google/calendar/events/{id}",
+            patch(google::update_calendar_event).delete(google::delete_calendar_event),
+        )
+        .route(
+            "/v1/google/calendar/free-slots",
+            get(google::get_free_slots),
         )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),

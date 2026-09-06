@@ -1,13 +1,8 @@
 /**
  * Application shell.
  *
- * There is no navigation state, because there is no navigation. Home fills the
- * screen; everything else is a sheet opened from here or from Home.
- *
- * The text conversation is mounted here rather than inside Home because it is
- * not part of the voice interface: it is the surface that exists until the
- * microphone does. When voice works, this button is what goes away, and Home is
- * untouched by its removal.
+ * Minimalist container that displays the primary assistant home,
+ * productivity screens, and Google ecosystem features.
  */
 
 import { useState } from "react";
@@ -20,9 +15,20 @@ import TasksScreen from "./screens/TasksScreen";
 import RemindersScreen from "./screens/RemindersScreen";
 import NotesScreen from "./screens/NotesScreen";
 import IdeasScreen from "./screens/IdeasScreen";
+import ConnectionsScreen from "./screens/ConnectionsScreen";
+import CalendarScreen from "./screens/CalendarScreen";
+import GmailScreen from "./screens/GmailScreen";
 import ConversationSheet from "./components/ConversationSheet";
 
-export type ScreenType = "home" | "tasks" | "reminders" | "notes" | "ideas";
+export type ScreenType =
+  | "home"
+  | "tasks"
+  | "reminders"
+  | "notes"
+  | "ideas"
+  | "connections"
+  | "calendar"
+  | "gmail";
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
@@ -53,6 +59,15 @@ export default function App() {
       {currentScreen === "ideas" && (
         <IdeasScreen onBack={() => setCurrentScreen("home")} />
       )}
+      {currentScreen === "connections" && (
+        <ConnectionsScreen onBack={() => setCurrentScreen("home")} />
+      )}
+      {currentScreen === "calendar" && (
+        <CalendarScreen onBack={() => setCurrentScreen("home")} />
+      )}
+      {currentScreen === "gmail" && (
+        <GmailScreen onBack={() => setCurrentScreen("home")} />
+      )}
 
       {currentScreen === "home" && (
         <Fab
@@ -76,5 +91,3 @@ export default function App() {
     </Box>
   );
 }
-
-

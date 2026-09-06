@@ -43,6 +43,10 @@ fn config() -> Config {
         model_max_output_tokens: 1024,
         model_timeout: std::time::Duration::from_secs(5),
         context_max_messages: 40,
+        google_client_id: None,
+        google_client_secret: None,
+        google_redirect_uri: None,
+        credential_encryption_key: None,
     }
 }
 

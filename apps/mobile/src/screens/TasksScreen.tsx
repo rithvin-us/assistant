@@ -54,7 +54,6 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [taskStatusFilter, setTaskStatusFilter] = useState<string>("todo");
-  const [taskPriorityFilter, setTaskPriorityFilter] = useState<string>("ALL");
 
   const [quickAddOpen, setQuickAddOpen] = useState(false);
 
@@ -70,7 +69,6 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
     try {
       const res = await fetchTasks({
         status: taskStatusFilter === "ALL" ? undefined : taskStatusFilter,
-        priority: taskPriorityFilter === "ALL" ? undefined : taskPriorityFilter,
         q: searchQuery || undefined,
       });
       setTasks(res);
@@ -87,7 +85,6 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
         try {
           const res = await fetchTasks({
             status: taskStatusFilter === "ALL" ? undefined : taskStatusFilter,
-            priority: taskPriorityFilter === "ALL" ? undefined : taskPriorityFilter,
             q: searchQuery || undefined,
           });
           if (!cancelled) setTasks(res);
@@ -99,7 +96,7 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
     return () => {
       cancelled = true;
     };
-  }, [taskStatusFilter, taskPriorityFilter, searchQuery]);
+  }, [taskStatusFilter, searchQuery]);
 
   const handleQuickAddTask = async (newTask: {
     title: string;
@@ -287,22 +284,6 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
                 "&:hover": {
                   bgcolor: taskStatusFilter === st ? "#B9382B" : "#EAEAEA",
                 },
-              }}
-            />
-          ))}
-          {["P1", "P2", "P3", "P4"].map((p) => (
-            <Chip
-              key={p}
-              size="small"
-              label={p}
-              variant={taskPriorityFilter === p ? "filled" : "outlined"}
-              onClick={() => setTaskPriorityFilter(taskPriorityFilter === p ? "ALL" : p)}
-              sx={{
-                fontWeight: 600,
-                fontSize: "0.75rem",
-                borderColor: PRIORITY_COLORS[p as keyof typeof PRIORITY_COLORS],
-                color: taskPriorityFilter === p ? "#FFF" : PRIORITY_COLORS[p as keyof typeof PRIORITY_COLORS],
-                bgcolor: taskPriorityFilter === p ? PRIORITY_COLORS[p as keyof typeof PRIORITY_COLORS] : "transparent",
               }}
             />
           ))}

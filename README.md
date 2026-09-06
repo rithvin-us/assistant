@@ -6,30 +6,21 @@
 
 A voice-first personal assistant. Rust backend, Tauri 2 + React mobile app, PostgreSQL.
 
-**Status: Milestone 4 complete — a real assistant that holds a conversation.**
+**Status: Milestone 5 complete — Google Ecosystem + Personal Schedule Foundation.**
 
 ## What works today
 
-- **A real Anthropic model provider** behind the vendor-neutral `ModelProvider`
-  trait, feature-gated so `assistant-core` cannot link or name it. Responses
-  stream token by token from the API all the way to the phone.
-- **Conversations persist in PostgreSQL.** Tell it your name, ask for it two
-  turns later, restart the server, ask again — the history is read back from the
-  database, scoped to the authenticated user in the SQL itself.
-- **The Android APK connects to the server** over an authenticated WebSocket and
-  renders the answer as it arrives. No provider credential is in the bundle: the
-  phone talks to this server, and this server talks to the provider.
-- Durable approvals, executions and an audit trail (M3), with the permission
-  seam the model cannot reach (ADR-0005).
-- A deterministic fast path that answers what code already knows without calling
-  a model at all.
-- CI running format, clippy, tests, typecheck, lint, build and secret scanning —
-  and depending on no external AI API.
+- **Multi-Account Google Connectivity:** Connect arbitrary ($N$) Google accounts (Personal, College, Work) via server-side OAuth2 with AES-256-GCM encrypted tokens at rest.
+- **Gmail Search and Read:** Search Gmail with native syntax (`is:unread`, `from:`, `subject:`) and read email messages with privacy-first sanitization.
+- **Google Calendar Management:** Read, search, create, and update calendar events. Destructive deletions are statically classified as Orange risk and require explicit human approval via durable actions.
+- **Deterministic Free-Time Calculation:** Pure mathematical interval arithmetic computes open calendar slots for task scheduling without requiring an LLM.
+- **Task to Calendar Foundation:** Tasks support estimated duration and due dates to bridge directly into personal schedule planning.
+- **Pure Light Theme Mobile Screens:** Dedicated Connections, Gmail, and Calendar screens alongside Tasks, Notes, and the conversational assistant.
+- **A real Anthropic model provider** behind the vendor-neutral `ModelProvider` trait.
+- **Conversations persist in PostgreSQL** scoped strictly to the authenticated user.
+- **Durable approvals, executions, and audit trail** (M3), preserving authoritative security.
 
-**Not built yet:** Gmail, Calendar, Drive, tasks, reminders, long-term memory,
-speech recognition and text-to-speech. Authentication is still a development
-bearer token. See [`docs/MILESTONE-4.md`](docs/MILESTONE-4.md) for the full list
-of what is deferred and why.
+**Not built yet:** Google Classroom, Google Drive, WhatsApp, long-term memory embeddings, automatic email importance classification, and local wake-word voice. See [`docs/MILESTONE-5.md`](docs/MILESTONE-5.md) for full details.
 
 ## Layout
 

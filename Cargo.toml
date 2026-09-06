@@ -64,6 +64,8 @@ futures = "0.3"
 # Reads a local .env in development. Used by the server's configuration layer
 # and by tests that need the same credentials the server would have.
 dotenvy = "0.15"
+# Credential encryption at rest (ADR-0025)
+aes-gcm = "0.10"
 
 # Profiles must live at the workspace root; `apps/mobile/src-tauri` is a member,
 # so its release tuning is declared here. See docs/DECISIONS.md ADR-0002.

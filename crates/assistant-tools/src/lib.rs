@@ -100,6 +100,18 @@ pub enum ToolError {
     Failed(String),
 }
 
+pub mod google_tools;
+pub mod providers;
+
+pub use google_tools::{
+    CalendarCreateTool, CalendarDeleteTool, CalendarListTool, CalendarSearchTool,
+    CalendarUpdateTool, GmailReadTool, GmailSearchTool,
+};
+pub use providers::{
+    CalendarEvent, CalendarProvider, CreateCalendarEvent, EmailDetail, EmailSummary, FreeSlot,
+    GmailProvider, UpdateCalendarEvent,
+};
+
 /// Implemented once per tool.
 ///
 /// `execute` is only ever reached after policy has returned
@@ -109,6 +121,16 @@ pub trait Tool: Send + Sync {
     fn spec(&self) -> &ToolSpec;
 
     async fn execute(&self, args: serde_json::Value) -> Result<serde_json::Value, ToolError>;
+
+    /// Executes tool with authenticated user context. Defaults to `execute(args)` for backward compatibility.
+    async fn execute_with_user(
+        &self,
+        user_id: Option<uuid::Uuid>,
+        args: serde_json::Value,
+    ) -> Result<serde_json::Value, ToolError> {
+        let _ = user_id;
+        self.execute(args).await
+    }
 }
 
 #[cfg(test)]

@@ -898,3 +898,176 @@ keys to mean anything, so `ensure_user` becomes an insert of a known subject
 rather than of an invented one. Offline development still works, because
 `DevTokenVerifier` remains selectable — but it is now selected explicitly rather
 than by default, so shipping it takes a deliberate act.
+
+---
+
+## ADR-0025 — Credential Encryption at Rest using AES-256-GCM
+
+**Decision.** OAuth refresh tokens and credentials stored in `connected_accounts`
+are encrypted using authenticated AES-256-GCM encryption with a 256-bit server
+master key (`CREDENTIAL_ENCRYPTION_KEY`). Each row stores a random 96-bit nonce
+alongside the ciphertext and authentication tag.
+
+**Context.** Connected Google accounts grant persistent access to sensitive user
+data (email, calendar). Raw refresh tokens in PostgreSQL create catastrophic risk
+if database dumps or backups are compromised.
+
+**Options.**
+1. Store plaintext tokens in PostgreSQL.
+2. Encrypt tokens with AES-256-GCM using a server-side symmetric key.
+3. Use an external cloud KMS (e.g. AWS KMS, GCP KMS).
+
+**Chosen approach: option 2.**
+
+**Reason.** Option 1 violates basic credential security principles. Option 3
+introduces third-party cloud infrastructure dependencies and paid monthly costs
+for a personal assistant system. Option 2 provides standard authenticated
+encryption using audited pure-Rust crypto (`aes-gcm`), keeping the master key
+strictly in server environment variables and never persisting it to disk or
+exposing it over network APIs.
+
+**Consequences.** Database backups do not contain usable OAuth credentials. If
+the server master key is rotated or lost, connected accounts enter an
+expired/reconnect-required state and must be re-authorized by the user.
+
+---
+
+## ADR-0026 — Multi-Account Scoping and Provider-Neutral Integrations
+
+**Decision.** Google integrations support an arbitrary number of connected
+accounts ($N$). Every tool call and API request explicitly requires an
+`account_id: Uuid`. Database queries enforce ownership with
+`WHERE id = $1 AND user_id = $2`. Capability traits (`GmailProvider`,
+`CalendarProvider`) live in `assistant-tools`, while concrete Google HTTP clients
+live in `assistant-server`. No Google SDK types leak into `assistant-core`.
+
+**Context.** Users often have multiple Google accounts (personal, college, work).
+A tool must never accidentally access the wrong account or leak credentials
+between users.
+
+**Options.**
+1. Global single Google account per user.
+2. Multi-account support with explicit account parameters and database-level ownership.
+
+**Chosen approach: option 2.**
+
+**Reason.** Enforcing ownership at the database query level ensures that even if
+an attacker modifies an account ID in an API request or prompt, the query returns
+zero rows, making another user's account indistinguishable from a non-existent
+one. Trait interfaces ensure `assistant-core` remains decoupled from concrete
+Google API schemas.
+
+---
+
+## ADR-0027 — Deterministic Free-Time Interval Arithmetic
+
+**Decision.** Available schedule slot computation is implemented as a
+deterministic mathematical interval complement over existing calendar events
+within a time window `[start, end]`, accounting for minimum event duration,
+meeting buffers, and study/work hours. No LLM inference is used.
+
+**Context.** Users need to find available time slots for scheduling tasks. Routing
+this question through an LLM is non-deterministic, high latency, costly, and
+prone to arithmetic hallucinations.
+
+**Options.**
+1. Send calendar events to an LLM and prompt it to find free time.
+2. Compute free time intervals deterministically in Rust.
+
+**Chosen approach: option 2.**
+
+**Reason.** Interval complement arithmetic is completely deterministic. It executes
+in sub-millisecond time and produces 100% mathematically correct available
+slots.
+
+
+## ADR-0028 — Projects and labels are rows, not repeated strings
+
+**Decision.** `tasks.project text` and `notes.tags text[]` are replaced by
+`projects` and `labels` tables owned by a user, referenced by id, with
+`task_labels` and `note_labels` as join tables. Names are unique per user,
+case-insensitively, via a `lower(name)` unique index. One project per user
+carries `is_inbox = true` and is the fallback every task lands in. Labels are
+shared between tasks and notes. `updated_at` is written by a database trigger
+rather than by each UPDATE statement. Migration `0007`.
+
+**Context.** The productivity layer stored a project as a name repeated on every
+task row and a tag as an element of a `text[]` on the note. Neither could be
+renamed without rewriting every row that mentioned it, neither could carry a
+colour or an ordering, and 'Work', 'work' and 'Work ' were three distinct
+values. A label could not be shared between a note and a task, so the same word
+meant two unrelated things depending on which screen created it. Separately,
+every UPDATE in `routes/productivity.rs` hand-wrote `updated_at = now()`: one
+place per statement to forget, and any writer other than that file left the
+timestamp stale.
+
+**Options.**
+1. Leave the strings and deduplicate in the client.
+2. Normalize projects only, keep `notes.tags` as an array.
+3. Normalize both into owned rows with join tables, and move `updated_at` into a
+   trigger.
+
+**Chosen approach: option 3.**
+
+**Reason.** Option 1 puts the uniqueness rule in the one place that cannot
+enforce it — a rename in one client cannot reach rows another client wrote.
+Option 2 keeps the harder half of the problem: a tag is exactly the thing a user
+most wants to rename and to reuse across item types, and `tags @> '{x}'` cannot
+share an index with the equality lookup a join table gets for free. Option 3
+makes the database the place a name exists once, which is what makes renaming a
+single UPDATE and makes "everything labelled @home" one indexed join.
+
+`on delete restrict` on `tasks.project_id` is deliberate. Deleting a project
+that still holds tasks is a decision about those tasks, not a side effect of
+tidying a sidebar; the route reassigns them to Inbox and then deletes, so the
+reassignment is visible in the code rather than implied by a cascade.
+
+`is_inbox` is a column rather than a match on the literal name `'Inbox'` because
+the user is free to rename that project, and a fallback that stops working when
+renamed is a bug that only appears for users who customise.
+
+**Consequences.** `PROTOCOL_VERSION` goes to 4: `TaskItem` gains `project_id`
+and `labels`, and `NoteItem`'s `tags` becomes a resolved list of label names
+rather than a stored array. New endpoints `/v1/projects` and `/v1/labels` manage
+the rows. Clients written against version 3 are rejected by the version check
+rather than silently misreading a task with no `project` field.
+
+## ADR-0029 — An unsent local write is queued, never silently accepted
+
+**Decision.** `apps/mobile/src/api/productivity.ts` no longer treats
+`localStorage` as an alternative database. A write made while the server is
+unreachable is appended to a durable outbox, replayed in order on the next
+reachable probe, and surfaced to the user as pending until the server has
+acknowledged it. `localStorage` holds a cache of server state plus the outbox,
+and is never the system of record.
+
+**Context.** The offline fallback wrote the item to `localStorage` and returned
+it as if the write had succeeded. Nothing ever replayed it. A task created
+while the server was down existed only in that browser profile's storage: it
+never reached Postgres, so it did not survive reinstalling the app, clearing
+site data, or opening the app anywhere else — and the UI reported success either
+way. The Supabase `tasks`, `reminders`, `notes` and `ideas` tables held zero
+rows while the app showed a populated list.
+
+**Options.**
+1. Keep the silent fallback.
+2. Remove the fallback and fail the write outright when the server is down.
+3. Keep writing locally, but as a replayed queue with pending state in the UI.
+
+**Chosen approach: option 3.**
+
+**Reason.** Option 1 is the same class of mistake as a canned assistant reply
+that looks like inference: it reports a state the system is not in. Durability
+is the entire reason the row goes to Postgres, and an interface that cannot
+distinguish "saved" from "saved nowhere" has removed the user's ability to
+notice. Option 2 is honest but throws away work for a network blip on a device
+that is offline by nature. Option 3 keeps the capture and keeps the truth: the
+item is visible immediately, marked pending, and becomes durable the moment the
+server answers.
+
+**Consequences.** Replay is idempotent by client-generated `id`: the create
+endpoint accepts the client's UUID so a retry after an ambiguous failure
+updates the same row instead of creating a second one. Queue entries carry an
+attempt count; an entry rejected with a 4xx is dead-lettered rather than
+retried forever, because a request the server has judged invalid will not become
+valid by being sent again.

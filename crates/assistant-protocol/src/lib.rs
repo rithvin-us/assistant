@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// Bumped whenever a breaking change is made to the types in this crate. The
 /// client sends the version it was built against so the server can reject a
 /// mismatched build instead of misparsing it.
-pub const PROTOCOL_VERSION: u32 = 3;
+pub const PROTOCOL_VERSION: u32 = 4;
 
 pub type ConversationId = Uuid;
 pub type MessageId = Uuid;
@@ -222,6 +222,37 @@ pub enum ApprovalOutcome {
     NotFound,
 }
 
+/// A user-owned project. Tasks reference one by id; see ADR-0028.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectItem {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub name: String,
+    pub color: String,
+    /// The one project per user that a task with no stated project falls back
+    /// to, and the one project that cannot be deleted. Flagged in the row
+    /// rather than matched by name, because the name is the user's to change.
+    pub is_inbox: bool,
+    pub position: i32,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+/// A user-owned label, shared by tasks and notes; see ADR-0028.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LabelItem {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub name: String,
+    pub color: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
 /// Standalone Task model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TaskItem {
@@ -233,7 +264,16 @@ pub struct TaskItem {
     pub status: String,
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub due_at: Option<OffsetDateTime>,
+    pub project_id: Uuid,
+    /// Resolved from `projects.name` on read. A projection for display, not a
+    /// stored column -- writes name the project by `project_id` or by name in
+    /// the request body, never by echoing this field back.
     pub project: String,
+    /// Resolved label names, sorted. Same projection rule as `project`.
+    #[serde(default)]
+    pub labels: Vec<String>,
+    #[serde(default)]
+    pub estimated_minutes: Option<u32>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
@@ -266,6 +306,9 @@ pub struct NoteItem {
     pub title: String,
     pub content: String,
     pub is_archived: bool,
+    /// Resolved label names, sorted. Backed by `labels` + `note_labels` since
+    /// ADR-0028, not by a stored `text[]`.
+    #[serde(default)]
     pub tags: Vec<String>,
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
@@ -286,4 +329,89 @@ pub struct IdeaItem {
     pub created_at: OffsetDateTime,
     #[serde(with = "time::serde::rfc3339")]
     pub updated_at: OffsetDateTime,
+}
+
+/// Sanitized summary of a connected external identity (Google account).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountSummary {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub provider: String,
+    pub provider_account_id: String,
+    pub email: String,
+    pub display_name: Option<String>,
+    pub scopes: Vec<String>,
+    pub status: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+}
+
+/// Normalized provider-neutral summary of an email.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailSummary {
+    pub id: String,
+    pub account_id: Uuid,
+    pub thread_id: String,
+    pub from: String,
+    pub to: Vec<String>,
+    pub subject: String,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub date: Option<OffsetDateTime>,
+    pub snippet: String,
+    pub is_unread: bool,
+}
+
+/// Normalized provider-neutral full email content.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmailDetail {
+    pub id: String,
+    pub account_id: Uuid,
+    pub thread_id: String,
+    pub from: String,
+    pub to: Vec<String>,
+    pub subject: String,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub date: Option<OffsetDateTime>,
+    pub body_text: String,
+    pub is_unread: bool,
+}
+
+/// Normalized provider-neutral calendar event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarEvent {
+    pub id: String,
+    pub account_id: Uuid,
+    pub title: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub start_time: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub end_time: OffsetDateTime,
+    pub description: Option<String>,
+    pub location: Option<String>,
+    pub all_day: bool,
+}
+
+/// Input payload to create a new calendar event.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateEventRequest {
+    pub account_id: Uuid,
+    pub title: String,
+    #[serde(with = "time::serde::rfc3339")]
+    pub start_time: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub end_time: OffsetDateTime,
+    pub description: Option<String>,
+    pub location: Option<String>,
+}
+
+/// Deterministic available free time slot.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FreeSlot {
+    #[serde(with = "time::serde::rfc3339")]
+    pub start_time: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub end_time: OffsetDateTime,
+    pub duration_minutes: u32,
 }

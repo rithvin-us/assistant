@@ -9,6 +9,8 @@ use assistant_auth::TokenVerifier;
 use assistant_core::{EventBus, Orchestrator, actions::ApprovalCoordinator};
 use sqlx::PgPool;
 
+use crate::google::GoogleClient;
+
 pub type SharedState = Arc<AppState>;
 
 pub struct AppState {
@@ -25,6 +27,8 @@ pub struct AppState {
     pub openai_api_key: Option<String>,
     pub openai_transcription_model: String,
     pub openai_transcription_language: Option<String>,
+    pub google: Option<Arc<GoogleClient>>,
+    pub google_redirect_uri: Option<String>,
 }
 
 impl AppState {

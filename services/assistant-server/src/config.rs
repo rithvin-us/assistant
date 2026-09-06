@@ -50,6 +50,15 @@ pub struct Config {
     pub model_timeout: Duration,
     /// How many past messages may be replayed to the model.
     pub context_max_messages: usize,
+
+    /// Google OAuth Client ID.
+    pub google_client_id: Option<String>,
+    /// Google OAuth Client Secret.
+    pub google_client_secret: Option<String>,
+    /// Google OAuth Redirect URI.
+    pub google_redirect_uri: Option<String>,
+    /// 32-byte AES-GCM encryption key for credentials at rest.
+    pub credential_encryption_key: Option<String>,
 }
 
 impl Config {
@@ -78,6 +87,23 @@ impl Config {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
+
+        let google_client_id = std::env::var("GOOGLE_CLIENT_ID")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let google_client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let google_redirect_uri = std::env::var("GOOGLE_REDIRECT_URI")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        let credential_encryption_key = std::env::var("CREDENTIAL_ENCRYPTION_KEY")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
 
         Ok(Self {
             bind_addr,
@@ -109,7 +135,32 @@ impl Config {
             model_max_output_tokens: parse_env("ASSISTANT_MODEL_MAX_OUTPUT_TOKENS", "4096")?,
             model_timeout: Duration::from_millis(parse_env("ASSISTANT_MODEL_TIMEOUT_MS", "60000")?),
             context_max_messages: parse_env("ASSISTANT_CONTEXT_MAX_MESSAGES", "40")?,
+
+            google_client_id,
+            google_client_secret,
+            google_redirect_uri,
+            credential_encryption_key,
         })
+    }
+
+    /// Resolves the 32-byte credential encryption key.
+    /// If CREDENTIAL_ENCRYPTION_KEY is provided (hex or 32-byte ascii), it decodes it.
+    /// If absent, falls back to a deterministic development key with a warning.
+    pub fn resolved_encryption_key(&self) -> [u8; 32] {
+        if let Some(ref key_str) = self.credential_encryption_key {
+            if let Some(bytes) = decode_hex_32(key_str) {
+                return bytes;
+            }
+            if key_str.len() == 32 {
+                let mut key = [0u8; 32];
+                key.copy_from_slice(key_str.as_bytes());
+                return key;
+            }
+        }
+        tracing::warn!(
+            "CREDENTIAL_ENCRYPTION_KEY is unset or invalid; using development fallback key"
+        );
+        *b"dev_credential_key_32_bytes_ok!!"
     }
 
     /// Builds the provider configuration, when this deployment has a credential.
@@ -126,6 +177,17 @@ impl Config {
     pub fn migrations_dir() -> PathBuf {
         PathBuf::from("migrations")
     }
+}
+
+fn decode_hex_32(s: &str) -> Option<[u8; 32]> {
+    if s.len() != 64 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
+    }
+    Some(out)
 }
 
 fn parse_env<T>(name: &'static str, default: &str) -> Result<T, ConfigError>
@@ -178,6 +240,19 @@ impl fmt::Debug for Config {
             .field("model_max_output_tokens", &self.model_max_output_tokens)
             .field("model_timeout", &self.model_timeout)
             .field("context_max_messages", &self.context_max_messages)
+            .field("google_client_id", &self.google_client_id)
+            .field(
+                "google_client_secret",
+                &self.google_client_secret.as_ref().map(|_| "<redacted>"),
+            )
+            .field("google_redirect_uri", &self.google_redirect_uri)
+            .field(
+                "credential_encryption_key",
+                &self
+                    .credential_encryption_key
+                    .as_ref()
+                    .map(|_| "<redacted>"),
+            )
             .finish()
     }
 }

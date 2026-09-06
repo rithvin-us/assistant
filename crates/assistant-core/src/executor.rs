@@ -99,24 +99,29 @@ impl ToolExecutor {
             }
         }
 
-        self.run_authorized(call, &spec, cancel).await
+        self.run_authorized_with_user(call, &spec, Some(principal.user_id), cancel)
+            .await
     }
 
     /// Runs a call that has **already** been authorised.
     ///
-    /// This is the only function in the codebase that invokes
-    /// [`assistant_tools::Tool::execute`]. Both paths converge here: the
-    /// in-turn path via [`Self::execute`], and the resumed path after a human
-    /// approved a held action. Approval changes whether this is reached, never
-    /// how execution happens.
-    ///
-    /// It is not public API for skipping policy — the caller must have obtained
-    /// `spec` from the registry and passed it through
-    /// [`PermissionPolicy::evaluate`] first. `execute` does exactly that.
+    /// This delegates to [`Self::run_authorized_with_user`] without an explicit user.
     pub async fn run_authorized(
         &self,
         call: &ToolCall,
         spec: &ToolSpec,
+        cancel: &CancellationToken,
+    ) -> Result<ToolResult, CoreError> {
+        self.run_authorized_with_user(call, spec, None, cancel)
+            .await
+    }
+
+    /// Runs a call that has already been authorised, with caller's authenticated user ID.
+    pub async fn run_authorized_with_user(
+        &self,
+        call: &ToolCall,
+        spec: &ToolSpec,
+        user_id: Option<uuid::Uuid>,
         cancel: &CancellationToken,
     ) -> Result<ToolResult, CoreError> {
         let tool = self
@@ -134,7 +139,7 @@ impl ToolExecutor {
 
             () = cancel.cancelled() => return Err(CoreError::Cancelled),
 
-            result = tokio::time::timeout(timeout, tool.execute(arguments)) => result,
+            result = tokio::time::timeout(timeout, tool.execute_with_user(user_id, arguments)) => result,
         };
 
         let result = match outcome {
