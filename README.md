@@ -59,6 +59,8 @@ Full setup, Android instructions and the check commands are in
 
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — layers, dependency rules,
   request paths, what is deliberately absent.
+- [`docs/MILESTONE-3.md`](docs/MILESTONE-3.md) — durable actions: lifecycle,
+  schema, state machines, idempotency, transactions, expiry, security boundaries.
 - [`docs/MILESTONE-2.md`](docs/MILESTONE-2.md) — the orchestrator: lifecycle,
   injection, execution modes, tool loop, permission and approval boundaries,
   streaming, cancellation, error model, testing strategy.

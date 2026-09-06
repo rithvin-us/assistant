@@ -354,3 +354,153 @@ execution, which is the intended trade. If a future tool is `Green` but
 internally stateful, that tool is misclassified and the classification is the bug
 to fix, not this rule. The behaviour is pinned by two tests -- one asserting
 read-only calls overlap, one asserting writes do not.
+
+---
+
+## ADR-0014 — Approvals, executions and audit are durable in Postgres
+
+**Context.** Milestone 2 stopped a turn at `RequireApproval` and lost the action.
+Nothing survived a restart, so an approval could never actually be answered.
+
+**Options.**
+1. Keep approvals in process memory.
+2. Persist approvals, executions and audit in Postgres.
+3. Introduce a workflow engine (Temporal) or a queue (Redis, RabbitMQ).
+
+**Chosen.** Option 2. Three tables, plain SQL, applied by sqlx-cli.
+
+**Reason.** An approval is a question put to a human, and humans answer minutes
+later, from a phone, after the server has been redeployed. In-memory state loses
+the action exactly when the product most needs it. A workflow engine would solve
+a distribution problem this system does not have while adding infrastructure,
+cost and an operational failure mode.
+
+Postgres also supplies the two properties this feature actually needs and that
+application code cannot provide safely on its own: row-level locking, which makes
+a double-tapped Approve button run one action rather than two, and transactions,
+which stop a half-answered approval existing.
+
+**Consequences.** Approvals only work where a database is configured. Without
+`DATABASE_URL` the turn still stops, but the client is sent `approval_id: null`
+and told the action was not persisted, rather than being handed an id that would
+fail on use. `/v1/health` already reports that deployment as degraded.
+
+The state machines are explicit (`ExecutionStatus`, `ApprovalStatus`) with a
+transition table in code and `CHECK` constraints in SQL, so `Cancelled → Running`
+— a rejected action executing anyway — is unrepresentable in both.
+
+---
+
+## ADR-0015 — An approval authorises one persisted action, and is re-validated
+
+**Context.** Once an action is durable, a client has to be able to say "yes" to
+it. What the client is allowed to say determines the whole security posture.
+
+**Options.**
+1. The client sends the tool name and arguments to approve.
+2. The client sends an approval id; the server loads the persisted action.
+3. The client approves a tool generally ("always allow `gmail.send`").
+
+**Chosen.** Option 2.
+
+**Reason.** Option 1 makes the client an input to authorisation — it could
+approve one action and execute another, and the server would have no way to tell.
+Option 3 converts a single decision into a standing grant, which is precisely the
+authority a prompt injection would try to obtain. Under option 2 the only thing a
+client contributes is a uuid; everything about what that uuid means comes from
+the database.
+
+Ownership is enforced inside the query, and a mismatch reports "not found" rather
+than "forbidden", so a caller cannot probe for the existence of other users'
+approvals. The schema carries `unique (execution_id)`, so one approval can never
+cover several actions.
+
+Approval is not a freeze on the world. Before the tool runs, the coordinator
+re-resolves the `ToolSpec` from the live registry and re-evaluates policy. An
+action whose tool has since been unregistered, blocklisted, or whose user has lost
+a scope, does not execute — it is cancelled and audited.
+
+**Consequences.** A client cannot approve something the server has not already
+decided to ask about. An approval granted before a policy change may refuse to
+run afterwards, which is the intended direction to fail in.
+
+Both paths converge on `ToolExecutor::run_authorized`, the only function in the
+codebase that calls `Tool::execute`. Approval changes whether that is reached,
+never how execution happens.
+
+---
+
+## ADR-0016 — What durable action records may contain
+
+**Context.** Resuming an approved action requires storing its arguments. Tool
+arguments are also the most likely place for sensitive content to appear — an
+email body, a document, a recipient list.
+
+**Options.**
+1. Store arguments and results everywhere, for maximum forensic detail.
+2. Store nothing, and accept that approvals cannot be resumed.
+3. Store arguments only where resume requires them; keep audit argument-free.
+
+**Chosen.** Option 3.
+
+**Reason.** `tool_executions.arguments` holds the validated arguments because
+resume means running exactly those — that is the whole mechanism, and dropping
+them would mean asking the client to re-supply them, which ADR-0015 forbids.
+
+`audit_events` stores no arguments at all. Its `summary` names the tool and the
+*keys* of its arguments, never their values: a calendar title is unremarkable and
+an email body is not, and a generic audit writer cannot tell them apart, so it
+records neither. A test asserts that known secret-shaped values do not survive
+into a summary.
+
+Credentials must never appear in either table. Tools receive credentials from the
+server at call time and must not accept them as arguments; that obligation is
+stated in the `Tool` contract and is a review requirement for every tool added
+later.
+
+**Consequences.** The audit trail answers who did what, when, under which
+decision and with what outcome — not what was written in the email. Anyone
+needing the latter must read the execution row deliberately, which is a separate,
+auditable act.
+
+Rows in `tool_executions` therefore inherit the sensitivity of the most sensitive
+tool in the registry. When a tool with genuinely sensitive arguments arrives,
+encryption at rest for that column, or a per-tool redaction hook, is the next
+step — and is deliberately not built ahead of the tool that needs it.
+
+---
+
+## ADR-0017 — Retention is deliberate, not automatic
+
+**Context.** Approvals, executions and audit events accumulate. Something has to
+say what happens to them.
+
+**Options.**
+1. Delete rows on a schedule from inside the application.
+2. Define retention boundaries now, implement cleanup when there is volume.
+3. Keep everything forever.
+
+**Chosen.** Option 2. No cleanup code ships in this milestone.
+
+**Reason.** An application that silently deletes its own audit trail is an
+application whose audit trail cannot be trusted — the rows most worth removing
+are exactly the ones someone would want removed. Volume is currently zero, so
+automatic deletion would be code with no purpose and a standing hazard.
+
+**Intended boundaries**, for whoever implements cleanup later:
+
+| Record | Boundary | Rationale |
+|---|---|---|
+| `approval_requests` | resolved or expired for 90 days | Answered questions have no ongoing use; the audit row preserves the decision. |
+| `tool_executions` | terminal for 90 days | Holds the most sensitive column (`arguments`), so it should be the shortest-lived. |
+| `audit_events` | retained; archived, never silently deleted | This is the record of what the assistant did on the user's behalf. |
+
+**Consequences.** Cleanup, when built, must be an explicit operation — a script
+or an admin action, not a background sweep — and must not remove audit events as
+a side effect of removing executions. `audit_events` deliberately has no foreign
+key to `tool_executions` for that reason: deleting an execution cannot cascade
+away its audit record.
+
+Approval *expiry* is a different thing and is implemented: it is enforced on the
+write path in `claim_approval`, so an approval cannot become executable again
+because a sweeper failed to run.

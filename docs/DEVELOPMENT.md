@@ -98,6 +98,30 @@ pwsh scripts/migrate.ps1
 
 Migrations are never applied on boot — see ADR-0006.
 
+## Durable action tests
+
+`services/assistant-server/tests/durable_actions.rs` exercises approvals,
+executions and audit against a real PostgreSQL. They **skip** when
+`DATABASE_URL` is unset, so the default suite needs no credentials.
+
+```powershell
+$env:DATABASE_URL = "<connection string>"
+pwsh scripts/migrate.ps1                       # once, to create the tables
+cargo test -p assistant-server --test durable_actions
+```
+
+Two things that will bite you:
+
+* **Supabase direct connections are IPv6-only.** `db.<ref>.supabase.co` has no
+  A record. On an IPv4-only network use the **session pooler** string from
+  Project Settings -> Database -> Connection string -> Session pooler
+  (`postgres.<ref>@aws-N-<region>.pooler.supabase.com:5432`). Session mode, not
+  transaction mode: transaction mode breaks prepared statements.
+* **The pooler caps concurrent clients** (15 on the project this was developed
+  against) and refuses the rest with `EMAXCONNSESSION`. The test harness holds a
+  semaphore to stay under it; if you point the tests at a smaller instance,
+  lower `DB_PERMITS`.
+
 ## Checks
 
 These are exactly what CI runs.

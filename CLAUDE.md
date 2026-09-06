@@ -58,6 +58,18 @@ call, a tool loop or a permission decision inside an Axum handler is a bug.
 `ToolSpec` and a `Principal` and nothing else. Do not add a parameter that model
 output can reach — that signature is the security property, not a style choice.
 
+**An approval authorises one persisted action.** The client sends an approval id
+and nothing else -- never a tool name, arguments, risk level or principal. The
+server loads the record and re-validates it against the live registry and policy
+before running. Never add a "trust this tool from now on" path.
+
+**Never add a second execution path.** `ToolExecutor::run_authorized` is the only
+function that calls `Tool::execute`. Approval changes whether it is reached.
+
+**Never put argument values in an audit event.** `summarize` records the tool and
+its argument keys. A generic writer cannot tell a calendar title from an email
+body, so it stores neither.
+
 **Never remove the tool-round bound.** `max_tool_rounds` is server configuration.
 The model must not be able to read it, raise it, or loop past it.
 

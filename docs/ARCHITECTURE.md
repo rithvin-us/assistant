@@ -55,6 +55,11 @@ touching orchestration — see ADR-0003.
 | `assistant-auth` | Auth is consumed by the server middleware and, later, by the desktop agent's connection handshake. |
 | `assistant-memory` | Memory has its own lifecycle and retention rules; keeping it separate stops conversation logging from quietly becoming memory. |
 
+Durable action storage follows the same rule as model providers: `assistant-core`
+declares the `ActionStore` trait and the atomicity it needs; the `sqlx`
+implementation lives in `assistant-server`, which already owns the pool. The core
+does not know Postgres exists.
+
 ## Request paths
 
 **Deterministic read** — "what are my tasks today?"
