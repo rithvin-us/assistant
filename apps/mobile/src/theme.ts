@@ -1,7 +1,5 @@
 /**
- * Material UI theme.
- *
- * Light mode is strictly enforced across the application.
+ * Material UI theme with zero tap highlight and anti-aliased typography.
  */
 
 import { createTheme } from "@mui/material/styles";
@@ -34,6 +32,25 @@ export const theme = createTheme({
     button: { textTransform: "none", fontWeight: 600 },
   },
   components: {
+    MuiCssBaseline: {
+      styleOverrides: `
+        * {
+          -webkit-tap-highlight-color: transparent !important;
+          -webkit-touch-callout: none !important;
+          outline: none !important;
+        }
+        *:focus, *:focus-visible, *:active {
+          outline: none !important;
+          box-shadow: none !important;
+        }
+        body {
+          user-select: none;
+          -webkit-user-select: none;
+          -webkit-font-smoothing: antialiased;
+          -moz-osx-font-smoothing: grayscale;
+        }
+      `,
+    },
     MuiPaper: {
       defaultProps: { elevation: 0 },
       styleOverrides: {
@@ -42,8 +59,11 @@ export const theme = createTheme({
     },
     MuiButton: {
       defaultProps: { disableElevation: true },
-      styleOverrides: { root: { minHeight: 44 } },
+      styleOverrides: { root: { minHeight: 44, WebkitTapHighlightColor: "transparent" } },
     },
-    MuiListItemButton: { styleOverrides: { root: { minHeight: 48 } } },
+    MuiIconButton: {
+      styleOverrides: { root: { WebkitTapHighlightColor: "transparent" } },
+    },
+    MuiListItemButton: { styleOverrides: { root: { minHeight: 48, WebkitTapHighlightColor: "transparent" } } },
   },
 });
