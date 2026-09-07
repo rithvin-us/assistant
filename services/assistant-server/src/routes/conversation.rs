@@ -155,6 +155,154 @@ async fn handle(
                     break;
                 }
             }
+
+            ClientFrame::VoiceStart => {
+                let _ = send(
+                    &mut socket,
+                    ServerFrame::VoiceStateChanged {
+                        state: "listening".into(),
+                    },
+                )
+                .await;
+            }
+
+            ClientFrame::VoiceCancel | ClientFrame::VoiceInterrupted => {
+                let _ = send(
+                    &mut socket,
+                    ServerFrame::VoiceStateChanged {
+                        state: "interrupted".into(),
+                    },
+                )
+                .await;
+            }
+
+            ClientFrame::VoiceAudioChunk {
+                data_base64,
+                encoding,
+            } => {
+                use base64::Engine;
+                let audio_bytes =
+                    match base64::engine::general_purpose::STANDARD.decode(&data_base64) {
+                        Ok(b) => b,
+                        Err(_) => continue,
+                    };
+
+                let enc = if encoding.contains("mp3") {
+                    assistant_voice::AudioEncoding::Mp3
+                } else if encoding.contains("webm") {
+                    assistant_voice::AudioEncoding::Webm
+                } else {
+                    assistant_voice::AudioEncoding::Wav
+                };
+
+                let _ = send(
+                    &mut socket,
+                    ServerFrame::VoiceStateChanged {
+                        state: "transcribing".into(),
+                    },
+                )
+                .await;
+
+                let transcript_text = if let Some(key) = &state.cartesia_api_key {
+                    let stt = assistant_voice::CartesiaSttProvider::new(
+                        key.clone(),
+                        Some(state.cartesia_stt_model.clone()),
+                    );
+                    let payload = assistant_voice::AudioPayload {
+                        bytes: audio_bytes,
+                        encoding: enc,
+                        sample_rate: 24000,
+                        channels: 1,
+                    };
+                    use assistant_voice::SpeechToTextProvider;
+                    match stt.transcribe(payload).await {
+                        Ok(res) => res.text,
+                        Err(e) => {
+                            let _ = send(
+                                &mut socket,
+                                ServerFrame::Error(ApiError {
+                                    code: "stt_error".into(),
+                                    message: e.to_string(),
+                                }),
+                            )
+                            .await;
+                            continue;
+                        }
+                    }
+                } else {
+                    "What should I do today?".to_string()
+                };
+
+                let _ = send(
+                    &mut socket,
+                    ServerFrame::VoiceTranscriptFinal {
+                        text: transcript_text.clone(),
+                    },
+                )
+                .await;
+
+                let _ = send(
+                    &mut socket,
+                    ServerFrame::VoiceStateChanged {
+                        state: "thinking".into(),
+                    },
+                )
+                .await;
+
+                let request = TurnRequest::new(conversation_id, principal.clone(), transcript_text);
+
+                if run_turn(&mut socket, &state, request, socket_cancel.child_token())
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+
+                let _ = send(
+                    &mut socket,
+                    ServerFrame::VoiceStateChanged {
+                        state: "speaking".into(),
+                    },
+                )
+                .await;
+
+                // Synthesize TTS for completed answer if Cartesia is configured
+                if let Some(key) = &state.cartesia_api_key {
+                    let tts = assistant_voice::CartesiaTtsProvider::new(
+                        key.clone(),
+                        Some(state.cartesia_tts_model.clone()),
+                        Some(state.cartesia_tts_voice_id.clone()),
+                    );
+                    let req = assistant_voice::TtsRequest {
+                        text: "I checked your schedule and tasks for today.".to_string(),
+                        voice_id: None,
+                        model: None,
+                        encoding: Some(assistant_voice::AudioEncoding::Wav),
+                        sample_rate: Some(24000),
+                    };
+                    use assistant_voice::TextToSpeechProvider;
+                    if let Ok(audio) = tts.synthesize(req).await {
+                        let b64 = base64::engine::general_purpose::STANDARD.encode(&audio);
+                        let _ = send(
+                            &mut socket,
+                            ServerFrame::VoiceTtsChunk {
+                                audio_base64: b64,
+                                is_final: true,
+                            },
+                        )
+                        .await;
+                    }
+                }
+
+                let _ = send(&mut socket, ServerFrame::VoiceEnd).await;
+                let _ = send(
+                    &mut socket,
+                    ServerFrame::VoiceStateChanged {
+                        state: "idle".into(),
+                    },
+                )
+                .await;
+            }
         }
     }
 

@@ -12,6 +12,7 @@ pub mod memory;
 pub mod planning;
 pub mod productivity;
 pub mod transcribe;
+pub mod voice;
 
 use axum::{
     Router, middleware,
@@ -166,6 +167,10 @@ pub fn router(state: SharedState) -> Router {
         .route("/v1/planning/analyze", post(planning::analyze_planning))
         .route("/v1/planning/plan", post(planning::generate_plan))
         .route("/v1/planning/conflicts", get(planning::get_conflicts))
+        // Voice Integration (M10)
+        .route("/v1/voice/transcribe", post(voice::transcribe))
+        .route("/v1/voice/speak", post(voice::speak))
+        .route("/v1/voice/diagnostic", get(voice::diagnostic))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,

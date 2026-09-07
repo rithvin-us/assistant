@@ -441,6 +441,10 @@ fn test_config() -> Config {
         google_redirect_uri: None,
         credential_encryption_key: None,
         document_storage_dir: std::path::PathBuf::from("./data/documents"),
+        cartesia_api_key: None,
+        cartesia_stt_model: "ink-en-us".to_string(),
+        cartesia_tts_model: "sonic-english".to_string(),
+        cartesia_tts_voice_id: "a0e99841-438c-4a64-b679-ae501e7d6091".to_string(),
     }
 }
 

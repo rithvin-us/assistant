@@ -60,10 +60,13 @@ pub struct Config {
     /// 32-byte AES-GCM encryption key for credentials at rest.
     pub credential_encryption_key: Option<String>,
     /// Directory the local document storage backend writes into (M8).
-    /// Defaults to `./data/documents` under the working directory. A Supabase
-    /// Storage or S3 backend can be added later behind the same trait; see
-    /// ADR-0036.
     pub document_storage_dir: PathBuf,
+
+    /// Cartesia API key for STT and TTS (M10). SERVER ONLY.
+    pub cartesia_api_key: Option<String>,
+    pub cartesia_stt_model: String,
+    pub cartesia_tts_model: String,
+    pub cartesia_tts_voice_id: String,
 }
 
 impl Config {
@@ -151,6 +154,16 @@ impl Config {
                 "ASSISTANT_DOCUMENT_STORAGE_DIR",
                 "./data/documents",
             )),
+            cartesia_api_key: std::env::var("CARTESIA_API_KEY")
+                .ok()
+                .map(|key| key.trim().to_string())
+                .filter(|key| !key.is_empty()),
+            cartesia_stt_model: env_or("CARTESIA_STT_MODEL", "ink-en-us"),
+            cartesia_tts_model: env_or("CARTESIA_TTS_MODEL", "sonic-english"),
+            cartesia_tts_voice_id: env_or(
+                "CARTESIA_TTS_VOICE_ID",
+                "a0e99841-438c-4a64-b679-ae501e7d6091",
+            ),
         })
     }
 

@@ -36,6 +36,10 @@ pub struct AppState {
     pub openai_transcription_language: Option<String>,
     pub google: Option<Arc<GoogleClient>>,
     pub google_redirect_uri: Option<String>,
+    pub cartesia_api_key: Option<String>,
+    pub cartesia_stt_model: String,
+    pub cartesia_tts_model: String,
+    pub cartesia_tts_voice_id: String,
 }
 
 impl AppState {

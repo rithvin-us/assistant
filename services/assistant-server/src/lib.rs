@@ -115,6 +115,10 @@ pub fn app(
         openai_transcription_language: config.openai_transcription_language.clone(),
         google,
         google_redirect_uri: config.google_redirect_uri.clone(),
+        cartesia_api_key: config.cartesia_api_key.clone(),
+        cartesia_stt_model: config.cartesia_stt_model.clone(),
+        cartesia_tts_model: config.cartesia_tts_model.clone(),
+        cartesia_tts_voice_id: config.cartesia_tts_voice_id.clone(),
     });
 
     let origins: Vec<HeaderValue> = config
