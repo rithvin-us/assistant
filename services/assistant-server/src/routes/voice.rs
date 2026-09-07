@@ -181,40 +181,43 @@ pub async fn speak(
         ));
     }
 
-    let api_key = state.cartesia_api_key.as_deref().ok_or_else(|| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ApiError {
-                code: "cartesia_not_configured".into(),
-                message: "CARTESIA_API_KEY is not configured on the server.".into(),
-            }),
-        )
-    })?;
+    let audio_res = if let Some(ref api_key) = state.cartesia_api_key {
+        let tts = CartesiaTtsProvider::new(
+            api_key.to_string(),
+            Some(state.cartesia_tts_model.clone()),
+            Some(
+                payload
+                    .voice_id
+                    .clone()
+                    .unwrap_or_else(|| state.cartesia_tts_voice_id.clone()),
+            ),
+        );
 
-    let tts = CartesiaTtsProvider::new(
-        api_key.to_string(),
-        Some(state.cartesia_tts_model.clone()),
-        Some(
-            payload
-                .voice_id
-                .unwrap_or_else(|| state.cartesia_tts_voice_id.clone()),
-        ),
-    );
+        let req = TtsRequest {
+            text: payload.text.clone(),
+            voice_id: None,
+            model: None,
+            encoding: Some(AudioEncoding::Wav),
+            sample_rate: Some(24000),
+        };
 
-    let req = TtsRequest {
-        text: payload.text,
-        voice_id: None,
-        model: None,
-        encoding: Some(AudioEncoding::Wav),
-        sample_rate: Some(24000),
+        match tts.synthesize(req).await {
+            Ok(bytes) => Ok((bytes, "audio/wav".to_string())),
+            Err(e) => {
+                tracing::warn!(error = %e, "Cartesia TTS failed; attempting Google free TTS fallback");
+                synthesize_google_free_tts(&state.http, &payload.text).await
+            }
+        }
+    } else {
+        synthesize_google_free_tts(&state.http, &payload.text).await
     };
 
-    let audio_bytes = tts.synthesize(req).await.map_err(|err| {
+    let (audio_bytes, mime_type) = audio_res.map_err(|err| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiError {
                 code: "tts_error".into(),
-                message: err.to_string(),
+                message: err,
             }),
         )
     })?;
@@ -224,8 +227,65 @@ pub async fn speak(
 
     Ok(Json(VoiceSpeakResponse {
         audio_base64: b64,
-        encoding: "audio/wav".into(),
+        encoding: mime_type,
     }))
+}
+
+async fn synthesize_google_free_tts(
+    http: &reqwest::Client,
+    text: &str,
+) -> Result<(Vec<u8>, String), String> {
+    let text_clean = text.replace('\n', " ");
+    let chunks = split_text_chunks(&text_clean, 200);
+    let mut combined_bytes = Vec::new();
+
+    for chunk in chunks {
+        let encoded = url::form_urlencoded::byte_serialize(chunk.as_bytes()).collect::<String>();
+        let url = format!("https://translate.google.com/translate_tts?ie=UTF-8&q={encoded}&tl=en&client=tw-ob");
+        let res = http
+            .get(&url)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            .send()
+            .await
+            .map_err(|e| format!("Google TTS transport error: {e}"))?;
+
+        if !res.status().is_success() {
+            return Err(format!("Google TTS status {}", res.status()));
+        }
+
+        let bytes = res
+            .bytes()
+            .await
+            .map_err(|e| format!("Failed to read TTS bytes: {e}"))?;
+        combined_bytes.extend_from_slice(&bytes);
+    }
+
+    Ok((combined_bytes, "audio/mp3".to_string()))
+}
+
+fn split_text_chunks(text: &str, max_len: usize) -> Vec<String> {
+    let mut chunks = Vec::new();
+    let mut current = String::new();
+
+    for word in text.split_whitespace() {
+        if current.len() + word.len() + 1 > max_len {
+            if !current.is_empty() {
+                chunks.push(current.clone());
+                current.clear();
+            }
+        }
+        if !current.is_empty() {
+            current.push(' ');
+        }
+        current.push_str(word);
+    }
+    if !current.is_empty() {
+        chunks.push(current);
+    }
+    if chunks.is_empty() {
+        chunks.push(text.to_string());
+    }
+    chunks
 }
 
 pub async fn diagnostic(

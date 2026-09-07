@@ -215,22 +215,30 @@ export function useVoiceTurn(): VoiceTurn {
       // step that may fail on its own without invalidating the answer.
       setState("speaking");
       let audioBase64: string | null = null;
+      let mimeType = "audio/wav";
       try {
         const spokenReply = await speakVoiceText(reply, undefined, controller.signal);
         audioBase64 = spokenReply.audio_base64 ?? null;
-      } catch {
+        if (spokenReply.encoding) {
+          mimeType = spokenReply.encoding;
+        }
+      } catch (err) {
+        console.warn("Server TTS failed; activating native Web Speech API fallback", err);
         // Zero-cost Native Device Speech Synthesis fallback (100% Free voice talk-back)
         if (typeof window !== "undefined" && "speechSynthesis" in window) {
           window.speechSynthesis.cancel();
           const utterance = new SpeechSynthesisUtterance(reply);
           utterance.lang = "en-US";
+          utterance.rate = 1.0;
+          utterance.pitch = 1.0;
+          utterance.volume = 1.0;
           window.speechSynthesis.speak(utterance);
         }
       }
 
       if (!live()) return;
       if (audioBase64) {
-        await playback.current.playBase64(audioBase64);
+        await playback.current.playBase64(audioBase64, mimeType);
       }
       if (!live()) return;
       setState("idle");
