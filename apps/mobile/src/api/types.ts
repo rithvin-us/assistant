@@ -181,6 +181,7 @@ export interface NoteItem {
   title: string;
   content: string;
   is_archived: boolean;
+  is_pinned?: boolean;
   /** Resolved label names. Backed by `labels` + `note_labels` since ADR-0028. */
   tags: string[];
   created_at: string;

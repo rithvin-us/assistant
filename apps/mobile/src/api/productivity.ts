@@ -831,6 +831,7 @@ export async function updateNote(
     title?: string;
     content?: string;
     is_archived?: boolean;
+    is_pinned?: boolean;
     tags?: string[];
   }
 ): Promise<NoteItem> {
