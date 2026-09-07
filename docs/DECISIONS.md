@@ -1674,3 +1674,39 @@ came from.
   an OpenAI request is byte-identical to what it was before.
 * Retired model ids remain an operational hazard: `gemini-2.0-flash` and
   `gemini-2.5-flash` both now 404. The model id stays configuration, not code.
+
+## ADR-0038 — A release build defaults to the deployed server, a dev build to localhost
+
+**Decision.** `SERVER_BASE_URL` in `apps/mobile/src/api/bridge.ts` falls back
+to the deployed Render service (`https://assistant-server-vbrv.onrender.com`)
+when `import.meta.env.PROD` is true, and to `http://127.0.0.1:8787` otherwise.
+`VITE_SERVER_BASE_URL` still overrides both.
+
+**Context.** An installed APK opened straight to "Couldn't reach the server"
+and the "Demo Mode" chip. The Render dashboard showed the service Live at the
+URL above; the phone simply was not pointed at it. The previous fallback was
+`http://127.0.0.1:8787` regardless of build mode, so a release build with no
+`.env` present resolved to a host the device cannot reach. `.env` is gitignored
+(and Vite inlines `VITE_*` at build time, not at run time), so a per-device
+setting is not a mechanism a shipped APK has.
+
+**Options.**
+1. Require every release build to pass `VITE_SERVER_BASE_URL` explicitly.
+2. Default to the deployed URL only when `import.meta.env.PROD` is true.
+3. Ship a config file the app reads at first launch.
+
+**Chosen approach: option 2.**
+
+**Reason.** Option 1 keeps the door open to the same bug: an APK built without
+the flag ships with a localhost fallback and looks broken to the user. Option 3
+adds a first-run screen and durable state for a single-user product with one
+known server. Option 2 makes the common case correct by default and leaves the
+override in place for LAN dev builds and staging.
+
+**Consequences.** A release APK reaches the deployed service with no
+per-device configuration. Pointing a release build elsewhere is still one env
+var (`VITE_SERVER_BASE_URL`). The deployed hostname is client code now: moving
+the service to a new hostname is a shell rebuild, not a runtime config change,
+which matches how `webpki-roots` already bakes the trust anchors (ADR-0031).
+`VITE_DEV_AUTH_TOKEN` still has to match the server's `DEV_AUTH_TOKEN`; a
+mismatch surfaces as 401s from every protected route, not as "unreachable".
