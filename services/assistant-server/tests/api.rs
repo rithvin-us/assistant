@@ -735,8 +735,8 @@ async fn assistant_text_reaches_the_client_incrementally_not_in_one_frame() {
     let message_ids: std::collections::HashSet<_> = frames
         .iter()
         .filter_map(|frame| match frame {
-            ServerFrame::AssistantDelta { message_id, .. } => Some(*message_id),
-            ServerFrame::TurnEnd { message_id } => Some(*message_id),
+            ServerFrame::AssistantDelta { message_id, .. } => Some(message_id),
+            ServerFrame::TurnEnd { message_id } => Some(message_id),
             _ => None,
         })
         .collect();
