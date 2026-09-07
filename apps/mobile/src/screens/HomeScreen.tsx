@@ -27,9 +27,9 @@ const CHECKING: ConnectionState = {
   detail: "Checking…",
 };
 
-import { transcribeAudio } from "../api/transcribe";
-import { executeTurn } from "../api/conversation";
-import { speakVoiceText, AudioPlaybackController } from "../api/voice";
+import ButtonBase from "@mui/material/ButtonBase";
+
+import { useVoiceTurn } from "../lib/useVoiceTurn";
 
 // Progressive status stages for AI response synthesis
 const AI_THINKING_STAGES = [
@@ -52,13 +52,12 @@ export default function HomeScreen({
   const [activeVoiceState, setActiveVoiceState] = useState<OrbState | null>(null);
   const [isHolding, setIsHolding] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
-  const [transcribedText, setTranscribedText] = useState<string | null>(null);
 
   const isHoldingRef = useRef(false);
   const isHandsFreeRef = useRef(false);
   const pointerDownTimeRef = useRef(0);
   const pointerStateAtDownRef = useRef<OrbState | null>(null);
-  const playbackControllerRef = useRef(new AudioPlaybackController());
+  const voiceTurn = useVoiceTurn();
 
   useEffect(() => {
     let cancelled = false;
@@ -70,14 +69,26 @@ export default function HomeScreen({
     };
   }, []);
 
+  // The controller is authoritative while a turn is in flight. `activeVoiceState`
+  // only covers what it does not own: holding to talk, and the initial connect.
+  const turnOrbState: OrbState | null =
+    voiceTurn.state === "transcribing" || voiceTurn.state === "thinking"
+      ? "thinking"
+      : voiceTurn.state === "speaking"
+        ? "speaking"
+        : voiceTurn.state === "error"
+          ? "error"
+          : null;
+
   const currentOrbState: OrbState =
+    turnOrbState ??
     activeVoiceState ??
-    (connection.kind === "checking"
-      ? "connecting"
-      : "idle");
+    (connection.kind === "checking" ? "connecting" : "idle");
 
   // Real-time microphone audio capture and OpenAI transcription recorder
-  const { audioLevel, stopListening } = useVoiceInput(currentOrbState === "listening");
+  const { audioLevel, stopListening, micError } = useVoiceInput(
+    currentOrbState === "listening",
+  );
 
   // Track elapsed timer during active turns (listening, thinking, speaking)
   useEffect(() => {
@@ -130,7 +141,9 @@ export default function HomeScreen({
     pointerStateAtDownRef.current = currentOrbState;
 
     if (currentOrbState === "thinking" || currentOrbState === "speaking") {
-      playbackControllerRef.current.stop();
+      // Barge-in: stop the audio AND abandon the turn, so a late transcript or
+      // reply cannot arrive later and talk over the next question.
+      voiceTurn.interrupt();
       setActiveVoiceState("idle");
       isHoldingRef.current = false;
       isHandsFreeRef.current = false;
@@ -143,7 +156,7 @@ export default function HomeScreen({
     }
 
     if (currentOrbState === "idle" || currentOrbState === "connecting") {
-      playbackControllerRef.current.stop();
+      voiceTurn.interrupt();
       isHoldingRef.current = true;
       isHandsFreeRef.current = false;
       setIsHolding(true);
@@ -171,39 +184,13 @@ export default function HomeScreen({
       isHoldingRef.current = false;
       isHandsFreeRef.current = false;
       setIsHolding(false);
-      setActiveVoiceState("thinking");
 
-      try {
-        const audioBlob = await stopListening();
-        let userText = "";
-
-        if (audioBlob && audioBlob.size > 200) {
-          userText = await transcribeAudio(audioBlob);
-        }
-
-        if (userText && userText.trim().length > 0) {
-          setTranscribedText(userText);
-          const aiReply = await executeTurn(userText);
-
-          if (aiReply && aiReply.trim().length > 0) {
-            setTranscribedText(aiReply);
-            setActiveVoiceState("speaking");
-            try {
-              const ttsRes = await speakVoiceText(aiReply);
-              if (ttsRes && ttsRes.audio_base64) {
-                await playbackControllerRef.current.playBase64(ttsRes.audio_base64);
-              }
-            } catch (ttsErr) {
-              console.warn("TTS voice playback notice:", ttsErr);
-            }
-          }
-        }
-      } catch (err) {
-        console.warn("Voice turn notice:", err);
-      } finally {
-        setActiveVoiceState("idle");
-        setTranscribedText(null);
-      }
+      // The controller owns the turn from here: it mints a turn id, aborts any
+      // previous turn, and refuses to apply a result that arrives after the
+      // user has moved on. Every failure it reports is shown rather than being
+      // logged to a console nobody is reading.
+      const audioBlob = await stopListening();
+      await voiceTurn.run(audioBlob);
     };
 
     if (stateAtDown === "listening" && isHandsFreeRef.current) {
@@ -258,6 +245,43 @@ export default function HomeScreen({
   const elapsedSec = (elapsedMs / 1000).toFixed(1);
 
   const renderStatus = () => {
+    // A microphone we cannot open outranks everything else: without it none of
+    // the states below mean anything. This used to be swallowed entirely while
+    // the orb animated a fake waveform.
+    if (micError) {
+      return (
+        <Typography
+          variant="body2"
+          sx={{ fontWeight: 600, color: "warning.main", textAlign: "center", px: 3 }}
+        >
+          {micError}
+        </Typography>
+      );
+    }
+
+    // Every voice failure now says what actually went wrong. These were
+    // console.warn only, so a failed turn looked identical to a turn the
+    // assistant simply chose not to answer.
+    if (voiceTurn.error) {
+      return (
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, px: 3 }}>
+          <Typography
+            variant="body2"
+            sx={{ fontWeight: 600, color: "error.main", textAlign: "center" }}
+          >
+            {voiceTurn.error.message}
+          </Typography>
+          <ButtonBase
+            onClick={voiceTurn.clearError}
+            aria-label="Dismiss voice error"
+            sx={{ px: 1.5, py: 0.5, borderRadius: 1, fontWeight: 600, color: "text.secondary" }}
+          >
+            Dismiss
+          </ButtonBase>
+        </Box>
+      );
+    }
+
     if (currentOrbState === "connecting") {
       return (
         <Typography variant="body1" color="text.secondary" sx={{ fontWeight: 500 }}>
@@ -302,8 +326,8 @@ export default function HomeScreen({
         AI_THINKING_STAGES[AI_THINKING_STAGES.length - 1];
 
       const displayText =
-        transcribedText && currentSec > 1.2
-          ? `"${transcribedText}"`
+        voiceTurn.transcript && currentSec > 1.2
+          ? `"${voiceTurn.transcript}"`
           : stage.text;
 
       return (
@@ -538,12 +562,15 @@ export default function HomeScreen({
         onClick={() => setSheetOpen(true)}
         sx={{
           mb: 3,
+          p: 2,
+          position: "relative",
+          zIndex: 10,
           color: "text.secondary",
           WebkitTapHighlightColor: "transparent !important",
           outline: "none !important",
         }}
       >
-        <MoreHorizRoundedIcon />
+        <MoreHorizRoundedIcon sx={{ fontSize: 32 }} />
       </IconButton>
 
       <MoreSheet

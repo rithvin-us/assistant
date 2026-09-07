@@ -1,10 +1,24 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 
+/** Why capture is unavailable, when it is. */
+export type MicrophoneStatus =
+  | "ok"
+  /** The user refused, or Android has not granted the runtime permission. */
+  | "denied"
+  /** No input device, or another app holds it. */
+  | "unavailable"
+  /** The WebView exposes no capture API at all. */
+  | "unsupported";
+
 export interface UseVoiceInputResult {
   audioLevel: number; // 0.0 to 1.0
   isListening: boolean;
   startListening: () => Promise<void>;
   stopListening: () => Promise<Blob | null>;
+  /** `ok` until a capture attempt actually fails. */
+  micStatus: MicrophoneStatus;
+  /** Human-readable reason, safe to show. Null when capture is fine. */
+  micError: string | null;
 }
 
 export function useVoiceInput(active: boolean): UseVoiceInputResult {
@@ -17,6 +31,8 @@ export function useVoiceInput(active: boolean): UseVoiceInputResult {
   const audioChunksRef = useRef<Blob[]>([]);
   const rafRef = useRef<number>(0);
   const smoothedLevelRef = useRef<number>(0);
+  const [micStatus, setMicStatus] = useState<MicrophoneStatus>("ok");
+  const [micError, setMicError] = useState<string | null>(null);
 
   const stopListening = useCallback(async (): Promise<Blob | null> => {
     if (rafRef.current) {
@@ -78,6 +94,8 @@ export function useVoiceInput(active: boolean): UseVoiceInputResult {
           },
         });
         streamRef.current = stream;
+        setMicStatus("ok");
+        setMicError(null);
 
         // Setup MediaRecorder for OpenAI voice transcription
         try {
@@ -144,9 +162,32 @@ export function useVoiceInput(active: boolean): UseVoiceInputResult {
         update();
         return;
       }
-    } catch {
-      // Fallback organic wave if mic permission denied
+    } catch (err) {
+      // A denied microphone used to fall through to the synthetic waveform
+      // below, so the orb animated as though it were hearing the user. That is
+      // the app lying about whether it is listening. Report it instead, and do
+      // not animate.
+      const name = (err as DOMException)?.name;
+      if (name === "NotAllowedError" || name === "SecurityError") {
+        setMicStatus("denied");
+        setMicError(
+          "Microphone access is off. Turn it on for Assistant in Android settings.",
+        );
+      } else if (name === "NotFoundError" || name === "NotReadableError") {
+        setMicStatus("unavailable");
+        setMicError("No microphone is available, or another app is using it.");
+      } else {
+        setMicStatus("unavailable");
+        setMicError("Couldn't start the microphone.");
+      }
+      setAudioLevel(0);
+      return;
     }
+
+    // Reached only when the WebView exposes no capture API. The animation below
+    // is decorative and explicitly not a recording.
+    setMicStatus("unsupported");
+    setMicError("This device can't capture audio in the app.");
 
     let t = 0;
     const fallbackUpdate = () => {
@@ -185,5 +226,7 @@ export function useVoiceInput(active: boolean): UseVoiceInputResult {
     isListening: active,
     startListening,
     stopListening,
+    micStatus,
+    micError,
   };
 }
