@@ -76,85 +76,112 @@ pub async fn transcribe(
         let b64 = base64::engine::general_purpose::STANDARD.encode(&body);
         let mime = if content_type.is_empty() { "audio/webm" } else { content_type };
 
-        let gemini_model = if state.openai_transcription_model.starts_with("gemini") {
-            &state.openai_transcription_model
+        let primary_model = if state.openai_transcription_model.starts_with("gemini") {
+            state.openai_transcription_model.as_str()
         } else {
-            "gemini-flash-latest"
+            "gemini-2.5-flash"
         };
 
-        let payload = serde_json::json!({
-            "contents": [
-                {
-                    "parts": [
-                        {
-                            "text": "Transcribe this audio recording verbatim. Output ONLY the raw spoken text without quotes, formatting, or commentary."
-                        },
-                        {
-                            "inlineData": {
-                                "mimeType": mime,
-                                "data": b64
+        // Try primary model, fallback to gemini-2.5-pro or gemini-flash-latest on 529/503 server spikes
+        let candidate_models = [primary_model, "gemini-2.5-pro", "gemini-flash-latest"];
+        let mut last_error_msg = String::new();
+
+        for (attempt, model_name) in candidate_models.iter().enumerate() {
+            if attempt > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+            }
+
+            let payload = serde_json::json!({
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "text": "Transcribe this audio recording verbatim. Output ONLY the exact spoken English text. Do not add quotes, markdown formatting, or commentary."
+                            },
+                            {
+                                "inlineData": {
+                                    "mimeType": mime,
+                                    "data": b64
+                                }
                             }
-                        }
-                    ]
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.0
                 }
-            ]
-        });
+            });
 
-        let url = format!(
-            "https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
-        );
+            let url = format!(
+                "https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent?key={api_key}"
+            );
 
-        let response = state
-            .http
-            .post(&url)
-            .json(&payload)
-            .send()
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "failed to contact Gemini generateContent API");
-                (
+            let response = match state.http.post(&url).json(&payload).send().await {
+                Ok(res) => res,
+                Err(e) => {
+                    tracing::warn!(attempt, error = %e, "Gemini transcription network transport attempt failed");
+                    last_error_msg = format!("Network error: {e}");
+                    continue;
+                }
+            };
+
+            let status = response.status();
+            let resp_json: serde_json::Value = match response.json().await {
+                Ok(j) => j,
+                Err(e) => {
+                    tracing::warn!(attempt, error = %e, "Failed to parse Gemini response JSON");
+                    last_error_msg = format!("JSON parse error: {e}");
+                    continue;
+                }
+            };
+
+            if !status.is_success() {
+                let msg = resp_json["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Gemini transcription failed");
+                tracing::warn!(status = %status, attempt, model = %model_name, error_message = %msg, "Gemini STT spike / error");
+                last_error_msg = msg.to_string();
+
+                // If 529 (Overloaded), 503 (Unavailable), or 429 (Rate Limit), retry with next model candidate
+                if status == StatusCode::SERVICE_UNAVAILABLE
+                    || status.as_u16() == 529
+                    || status == StatusCode::TOO_MANY_REQUESTS
+                {
+                    continue;
+                }
+
+                // For fatal errors (e.g. invalid key), fail early
+                return Err((
                     StatusCode::BAD_GATEWAY,
                     Json(ApiError {
-                        code: "transcription_transport_error".into(),
-                        message: "Failed to reach Gemini transcription API.".into(),
+                        code: "transcription_error".into(),
+                        message: msg.to_string(),
                     }),
-                )
-            })?;
+                ));
+            }
 
-        let status = response.status();
-        let resp_json: serde_json::Value = response.json().await.map_err(|e| {
-            (
-                StatusCode::BAD_GATEWAY,
-                Json(ApiError {
-                    code: "transcription_read_error".into(),
-                    message: format!("Failed to parse Gemini transcription response: {e}"),
-                }),
-            )
-        })?;
-
-        if !status.is_success() {
-            let msg = resp_json["error"]["message"]
+            let transcribed_text = resp_json["candidates"][0]["content"]["parts"][0]["text"]
                 .as_str()
-                .unwrap_or("Gemini transcription failed");
-            tracing::error!(status = %status, error_message = %msg, "Gemini transcription error response");
-            return Err((
-                StatusCode::BAD_GATEWAY,
-                Json(ApiError {
-                    code: "transcription_error".into(),
-                    message: msg.to_string(),
-                }),
-            ));
+                .unwrap_or("")
+                .trim()
+                .to_string();
+
+            return Ok(Json(TranscribeResponse {
+                text: transcribed_text,
+            }));
         }
 
-        let transcribed_text = resp_json["candidates"][0]["content"]["parts"][0]["text"]
-            .as_str()
-            .unwrap_or("")
-            .trim()
-            .to_string();
-
-        return Ok(Json(TranscribeResponse {
-            text: transcribed_text,
-        }));
+        return Err((
+            StatusCode::BAD_GATEWAY,
+            Json(ApiError {
+                code: "transcription_error".into(),
+                message: if last_error_msg.is_empty() {
+                    "All Gemini transcription model attempts failed.".into()
+                } else {
+                    last_error_msg
+                },
+            }),
+        ));
     }
 
     // Standard OpenAI Whisper multipart upload path
