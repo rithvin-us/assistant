@@ -307,7 +307,7 @@ async fn an_approval_required_tool_halts_the_turn_over_the_socket() {
     let approval = frames
         .iter()
         .find_map(|frame| match frame {
-            ServerFrame::ApprovalRequired { name, risk, .. } => Some((name.clone(), *risk)),
+            ServerFrame::ApprovalRequired { name, risk, .. } => Some((name.clone(), risk.clone())),
             _ => None,
         })
         .unwrap_or_else(|| panic!("no ApprovalRequired frame: {frames:?}"));
