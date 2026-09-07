@@ -145,8 +145,22 @@ export async function executeTurn(
 
   return new Promise<TurnOutcome>((resolve, reject) => {
     let unlisten: UnlistenFn | null = null;
+    const timer = setTimeout(() => {
+      cleanup();
+      if (fullAnswer) {
+        resolve({ text: fullAnswer, pendingApprovals });
+      } else {
+        reject(
+          new TurnFailedError(
+            "The assistant took too long to respond. Please try again.",
+            "turn_timeout"
+          )
+        );
+      }
+    }, 30_000);
 
     const cleanup = () => {
+      clearTimeout(timer);
       if (unlisten) unlisten();
       void closeConversation();
     };

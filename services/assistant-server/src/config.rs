@@ -155,7 +155,7 @@ impl Config {
                 .filter(|l| !l.is_empty()),
             model: env_or("ASSISTANT_MODEL", "gemini-flash-latest"),
             model_max_output_tokens: parse_env("ASSISTANT_MODEL_MAX_OUTPUT_TOKENS", "4096")?,
-            model_timeout: Duration::from_millis(parse_env("ASSISTANT_MODEL_TIMEOUT_MS", "60000")?),
+            model_timeout: Duration::from_millis(parse_env("ASSISTANT_MODEL_TIMEOUT_MS", "15000")?),
             context_max_messages: parse_env("ASSISTANT_CONTEXT_MAX_MESSAGES", "40")?,
 
             google_client_id,
