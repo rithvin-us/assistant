@@ -1,11 +1,11 @@
-﻿/**
- * NotesScreen â€” Apple Notes-inspired design.
+/**
+ * NotesScreen — Apple Notes-inspired design.
  *
  * Three-view state machine: folders -> note list -> full-screen editor.
  * Design tokens from DESIGN-applenotes.md:
- *   - Cream canvas: #FFFBED (warm, not pure white)
- *   - Orange: #F09A38 (FAB, focus ring, tag chips)
- *   - Folder yellow: #F5D773 (folder glyph CSS)
+ *   - Cream canvas: #FFFBED (warm, non-blinding background)
+ *   - Orange: #F09A38 (FAB, focus rings, tag chips)
+ *   - Folder yellow: #F5D773 (folder glyphs)
  *   - Text/Ink: #1C1C1E / Slate: #8E8E93
  */
 
@@ -16,6 +16,8 @@ import IconButton from "@mui/material/IconButton";
 import InputBase from "@mui/material/InputBase";
 import Fab from "@mui/material/Fab";
 import Divider from "@mui/material/Divider";
+import ButtonBase from "@mui/material/ButtonBase";
+import CircularProgress from "@mui/material/CircularProgress";
 
 import ArrowBackIosNewRoundedIcon from "@mui/icons-material/ArrowBackIosNewRounded";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
@@ -31,10 +33,16 @@ import TextFormatRoundedIcon from "@mui/icons-material/TextFormatRounded";
 import MoreHorizRoundedIcon from "@mui/icons-material/MoreHorizRounded";
 import MicRoundedIcon from "@mui/icons-material/MicRounded";
 
+import PullToRefresh from "../components/PullToRefresh";
+import SwipeableRow from "../components/SwipeableRow";
+import type { SwipeAction } from "../components/SwipeableRow";
+import { MOTION, motionSafeTransition } from "../lib/motion";
+import { useRefreshable } from "../lib/useRefreshable";
+
 import type { NoteItem } from "../api/types";
 import { fetchNotes, createNote, updateNote, deleteNote } from "../api/productivity";
 
-// â”€â”€â”€ Color Tokens â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Color Tokens ---
 const C = {
   cream: "#FFFBED",
   creamSurf1: "#FAF6E3",
@@ -63,7 +71,7 @@ interface NotesScreenProps {
   onBack?: () => void;
 }
 
-// â”€â”€â”€ Folder Glyph (CSS-drawn yellow tab-folder) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Folder Glyph (CSS-drawn yellow tab-folder) ---
 function FolderGlyph({ size = 24 }: { size?: number }) {
   return (
     <Box sx={{ width: size, height: size * 0.78, position: "relative", transform: "rotate(-2deg)", flexShrink: 0 }}>
@@ -74,17 +82,55 @@ function FolderGlyph({ size = 24 }: { size?: number }) {
   );
 }
 
-// â”€â”€â”€ Note Row â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-function NoteRow({ note, onClick, onDelete, onToggleArchive, onTogglePin }: {
+// --- Note Row ---
+function NoteRow({
+  note,
+  onClick,
+  onDelete,
+  onToggleArchive,
+  onTogglePin,
+  onOpenChange,
+  forceClosed,
+}: {
   note: NoteItem;
   onClick: () => void;
   onDelete: () => void;
   onToggleArchive: () => void;
   onTogglePin: () => void;
+  onOpenChange: (id: string | null) => void;
+  forceClosed: boolean;
 }) {
+  // Swipe only ever REVEALS these; each still needs a deliberate tap. Delete is
+  // additionally mirrored in the editor, so it is never gesture-only. Pin and
+  // archive keep their inline icon buttons for the same reason.
+  const actions: SwipeAction[] = [
+    {
+      id: "pin",
+      label: note.is_pinned ? "Unpin" : "Pin",
+      icon: <PushPinRoundedIcon sx={{ fontSize: 19 }} />,
+      color: C.orange,
+      onPress: onTogglePin,
+    },
+    {
+      id: "archive",
+      label: note.is_archived ? "Restore" : "Archive",
+      icon: note.is_archived
+        ? <UnarchiveOutlinedIcon sx={{ fontSize: 19 }} />
+        : <ArchiveOutlinedIcon sx={{ fontSize: 19 }} />,
+      color: C.slate,
+      onPress: onToggleArchive,
+    },
+    {
+      id: "delete",
+      label: "Delete",
+      icon: <DeleteOutlineRoundedIcon sx={{ fontSize: 19 }} />,
+      color: "#FF3B30",
+      destructive: true,
+      onPress: onDelete,
+    },
+  ];
+
   const [pressed, setPressed] = useState(false);
-  const [swipeX, setSwipeX] = useState(0);
-  const touchStartX = useRef(0);
 
   const dateStr = note.updated_at
     ? new Date(note.updated_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })
@@ -92,26 +138,34 @@ function NoteRow({ note, onClick, onDelete, onToggleArchive, onTogglePin }: {
   const preview = (note.content ?? "").replace(/\n/g, " ").trim();
 
   return (
-    <Box sx={{ position: "relative", overflow: "hidden", bgcolor: note.is_pinned ? C.creamSurf1 : C.cream }}>
-      <Box sx={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 80, bgcolor: "#FF3B30", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <DeleteOutlineRoundedIcon sx={{ color: "#fff", fontSize: 22 }} />
-      </Box>
+    <SwipeableRow
+      actions={actions}
+      background={note.is_pinned ? C.creamSurf1 : C.cream}
+      onOpenChange={(isOpen) => onOpenChange(isOpen ? note.id : null)}
+      forceClosed={forceClosed}
+    >
       <Box
-        onTouchStart={(e) => { touchStartX.current = e.touches[0].clientX; }}
-        onTouchMove={(e) => {
-          const dx = e.touches[0].clientX - touchStartX.current;
-          if (dx < 0) setSwipeX(Math.max(dx, -80));
-        }}
-        onTouchEnd={() => { if (swipeX < -50) onDelete(); setSwipeX(0); }}
-        onMouseDown={() => setPressed(true)}
-        onMouseUp={() => setPressed(false)}
-        onMouseLeave={() => setPressed(false)}
+        onPointerDown={() => setPressed(true)}
+        onPointerUp={() => setPressed(false)}
+        onPointerCancel={() => setPressed(false)}
+        onPointerLeave={() => setPressed(false)}
         onClick={onClick}
+        role="button"
+        tabIndex={0}
+        aria-label={`Open note: ${note.title || "New Note"}`}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onClick();
+          }
+        }}
         sx={{
-          transform: `translateX(${swipeX}px) scale(${pressed ? 0.99 : 1})`,
-          transition: swipeX === 0 ? "transform 0.2s ease" : "none",
+          transform: `scale(${pressed ? 0.99 : 1})`,
+          transition: motionSafeTransition(
+            `transform ${MOTION.duration.fast}ms ${MOTION.easing.standard}`,
+          ),
           bgcolor: note.is_pinned ? C.creamSurf1 : C.cream,
-          px: 2, pt: 1.75, pb: 0, cursor: "pointer", userSelect: "none",
+          px: 2.5, pt: 1.75, pb: 0, cursor: "pointer", userSelect: "none",
         }}
       >
         <Box sx={{ minHeight: 68 }}>
@@ -147,11 +201,11 @@ function NoteRow({ note, onClick, onDelete, onToggleArchive, onTogglePin }: {
         </Box>
         <Box sx={{ height: 0.5, bgcolor: C.divider, mt: 1.5 }} />
       </Box>
-    </Box>
+    </SwipeableRow>
   );
 }
 
-// â”€â”€â”€ Pinned Card â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Pinned Card ---
 function PinnedCard({ note, onClick }: { note: NoteItem; onClick: () => void }) {
   return (
     <Box onClick={onClick} sx={{ width: 150, height: 90, flexShrink: 0, borderRadius: 2, bgcolor: C.creamSurf1, p: 1.5, cursor: "pointer", display: "flex", flexDirection: "column", gap: 0.5, border: `1px solid ${C.divider}`, transition: "transform 0.12s ease", "&:active": { transform: "scale(0.97)" } }}>
@@ -168,7 +222,7 @@ function PinnedCard({ note, onClick }: { note: NoteItem; onClick: () => void }) 
   );
 }
 
-// â”€â”€â”€ Search Bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Search Bar ---
 function NotesSearchBar({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const [focused, setFocused] = useState(false);
   return (
@@ -177,7 +231,7 @@ function NotesSearchBar({ value, onChange }: { value: string; onChange: (v: stri
       <InputBase
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        placeholder="Search"
+        placeholder="Search notes"
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         sx={{ flex: 1, fontSize: "0.95rem", color: C.ink, "& input": { p: 0 }, "& input::placeholder": { color: C.slate } }}
@@ -194,7 +248,7 @@ function NotesSearchBar({ value, onChange }: { value: string; onChange: (v: stri
   );
 }
 
-// â”€â”€â”€ Note Editor â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// --- Note Editor ---
 function NoteEditor({ note, onBack, onSave }: {
   note: Partial<NoteItem> & { isNew?: boolean };
   onBack: () => void;
@@ -264,14 +318,54 @@ function NoteEditor({ note, onBack, onSave }: {
   );
 }
 
-// â”€â”€â”€ Main Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+/**
+ * New-note FAB.
+ *
+ * Hoisted to module scope on purpose. Defined inside the screen body it got a
+ * fresh component identity on every render, so React unmounted and remounted
+ * it mid-gesture: `onPointerUp` landed on a node that no longer existed and the
+ * pressed state stayed stuck on. Owning its own press state also stops a press
+ * from re-rendering the whole screen.
+ */
+function NewNoteFab({ onClick }: { onClick: () => void }) {
+  const [pressed, setPressed] = useState(false);
+
+  return (
+    <Fab
+      aria-label="New note"
+      onClick={onClick}
+      onPointerDown={() => setPressed(true)}
+      onPointerUp={() => setPressed(false)}
+      // Cancellation matters here: the Android back gesture starts at the screen
+      // edge, right where this FAB sits.
+      onPointerCancel={() => setPressed(false)}
+      onPointerLeave={() => setPressed(false)}
+      sx={{
+        position: "fixed",
+        right: 20,
+        bottom: "calc(20px + env(safe-area-inset-bottom))",
+        bgcolor: C.orange,
+        color: "#fff",
+        boxShadow: `0 4px 20px ${C.orange}60`,
+        transform: pressed ? "scale(0.94)" : "scale(1)",
+        transition: motionSafeTransition(
+          `transform ${MOTION.duration.fast}ms ${MOTION.easing.standard}`,
+        ),
+        "&:hover": { bgcolor: C.orangePressed },
+      }}
+    >
+      <EditRoundedIcon />
+    </Fab>
+  );
+}
+
+// --- Main Screen ---
 export default function NotesScreen({ onBack }: NotesScreenProps) {
   const [view, setView] = useState<View>("folders");
   const [activeFolder, setActiveFolder] = useState<FolderDef | null>(null);
-  const [notes, setNotes] = useState<NoteItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [openRowId, setOpenRowId] = useState<string | null>(null);
   const [editingNote, setEditingNote] = useState<(Partial<NoteItem> & { isNew?: boolean }) | null>(null);
-  const [fabPressed, setFabPressed] = useState(false);
 
   const folders: FolderDef[] = [
     { id: "all", label: "All Notes", smart: false, filter: (n) => !n.is_archived },
@@ -279,20 +373,19 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
     { id: "archived", label: "Recently Deleted", smart: true, filter: (n) => !!n.is_archived },
   ];
 
-  const loadNotes = useCallback(async () => {
-    try {
-      const res = await fetchNotes({ q: searchQuery || undefined });
-      setNotes(res);
-    } catch (err) {
-      console.warn("Failed to load notes:", err);
-    }
-  }, [searchQuery]);
+  // Search filters the already-loaded list locally (see `filteredNotes`), so the
+  // fetch deliberately takes no query. It used to depend on `searchQuery`, which
+  // meant every keystroke tore down the poll interval and fired a request.
+  const notesFetch = useCallback(() => fetchNotes(), []);
+  const {
+    data: notesData,
+    loading,
+    error: loadError,
+    refresh: handleRefresh,
+    setData: setNotesData,
+  } = useRefreshable<NoteItem[]>(notesFetch, { pollMs: 15000 });
 
-  useEffect(() => {
-    void loadNotes();
-    const iv = setInterval(() => void loadNotes(), 15000);
-    return () => clearInterval(iv);
-  }, [loadNotes]);
+  const notes = notesData ?? [];
 
   const folderNotes = (folder: FolderDef | null) => folder ? notes.filter(folder.filter) : [];
 
@@ -313,6 +406,7 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
   };
 
   const handleOpenNote = (note: NoteItem) => {
+    setOpenRowId(null);
     setEditingNote(note);
     setView("editor");
   };
@@ -329,49 +423,28 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
     } else {
       await createNote({ title, content, tags });
     }
-    await loadNotes();
+    await handleRefresh();
   };
 
   const handleDelete = async (id: string) => {
-    setNotes((prev) => prev.filter((n) => n.id !== id));
+    // The backend is the system of record: ask first, then reflect the result.
+    // Removing the row up front made a failed delete look like a success.
+    // The backend is the system of record: ask first, then reflect the result.
     await deleteNote(id);
+    setNotesData((prev) => (prev ?? []).filter((n) => n.id !== id));
   };
 
   const handleToggleArchive = async (note: NoteItem) => {
     await updateNote(note.id, { is_archived: !note.is_archived });
-    await loadNotes();
+    await handleRefresh();
   };
 
   const handleTogglePin = async (note: NoteItem) => {
     await updateNote(note.id, { is_pinned: !note.is_pinned });
-    await loadNotes();
+    await handleRefresh();
   };
 
-  const FabButton = () => (
-    <Fab
-      aria-label="New Note"
-      onClick={handleNewNote}
-      onMouseDown={() => setFabPressed(true)}
-      onMouseUp={() => setFabPressed(false)}
-      onTouchStart={() => setFabPressed(true)}
-      onTouchEnd={() => setFabPressed(false)}
-      sx={{
-        position: "fixed",
-        right: 20,
-        bottom: "calc(20px + env(safe-area-inset-bottom))",
-        bgcolor: C.orange,
-        color: "#fff",
-        boxShadow: `0 4px 20px ${C.orange}60`,
-        transform: fabPressed ? "scale(0.94)" : "scale(1)",
-        transition: "transform 0.15s cubic-bezier(0.34,1.56,0.64,1), background 0.1s",
-        "&:hover": { bgcolor: C.orangePressed },
-      }}
-    >
-      <EditRoundedIcon />
-    </Fab>
-  );
-
-  // â”€â”€ Folders View â”€â”€
+  // -- Folders View --
   if (view === "folders") {
     return (
       <Box sx={{ height: "100%", display: "flex", flexDirection: "column", bgcolor: C.cream }}>
@@ -384,7 +457,7 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
           <Typography sx={{ fontSize: "2.1rem", fontWeight: 800, color: C.ink, letterSpacing: -0.5, lineHeight: 1.1, flex: 1 }}>
             Notes
           </Typography>
-          <IconButton sx={{ color: C.orange }}><EditRoundedIcon sx={{ fontSize: 22 }} /></IconButton>
+          <IconButton sx={{ color: C.orange }} onClick={handleNewNote}><EditRoundedIcon sx={{ fontSize: 22 }} /></IconButton>
         </Box>
         <Box sx={{ px: 2, pb: 1.5 }}>
           <NotesSearchBar value={searchQuery} onChange={setSearchQuery} />
@@ -420,12 +493,12 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
             {notes.filter((n) => !n.is_archived).length} Notes
           </Typography>
         </Box>
-        <FabButton />
+        <NewNoteFab onClick={handleNewNote} />
       </Box>
     );
   }
 
-  // â”€â”€ List View â”€â”€
+  // -- List View --
   if (view === "list" && activeFolder) {
     const displayNotes = filteredNotes ?? unpinnedNotes;
     const displayPinned = filteredNotes ? [] : pinnedNotes;
@@ -446,7 +519,25 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
         <Box sx={{ px: 2, pb: 1 }}>
           <NotesSearchBar value={searchQuery} onChange={setSearchQuery} />
         </Box>
-        <Box sx={{ flex: 1, overflowY: "auto", pb: 6 }}>
+        <PullToRefresh onRefresh={handleRefresh} sx={{ pb: 6 }}>
+          {loadError && (
+            <Box sx={{ px: 2.5, py: 1.5, display: "flex", alignItems: "center", gap: 1.5 }}>
+              <Typography sx={{ flex: 1, fontSize: "0.82rem", color: "#FF3B30" }}>
+                {loadError}
+              </Typography>
+              <ButtonBase
+                onClick={() => void handleRefresh()}
+                sx={{ px: 1.5, py: 0.5, borderRadius: 1, color: C.orange, fontSize: "0.82rem", fontWeight: 600 }}
+              >
+                Retry
+              </ButtonBase>
+            </Box>
+          )}
+          {loading && notes.length === 0 && (
+            <Box sx={{ display: "flex", justifyContent: "center", pt: 8 }}>
+              <CircularProgress size={24} sx={{ color: C.orange }} />
+            </Box>
+          )}
           {displayPinned.length > 0 && (
             <Box sx={{ pb: 1.5 }}>
               <Typography sx={{ px: 2.5, fontSize: "0.78rem", fontWeight: 700, color: C.slate, pb: 0.75, textTransform: "uppercase", letterSpacing: 0.5 }}>
@@ -462,7 +553,11 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
           )}
           {displayNotes.length === 0 && displayPinned.length === 0 ? (
             <Typography sx={{ textAlign: "center", pt: 8, color: C.slate, fontSize: "0.9rem" }}>
-              {searchQuery ? "No notes match your search." : "No notes yet. Tap the pencil to write one."}
+              {searchQuery
+                ? "No notes match your search."
+                : loading
+                  ? ""
+                  : "No notes yet. Tap the pencil to write one."}
             </Typography>
           ) : (
             <>
@@ -479,6 +574,8 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
                   onDelete={() => void handleDelete(note.id)}
                   onToggleArchive={() => void handleToggleArchive(note)}
                   onTogglePin={() => void handleTogglePin(note)}
+                  onOpenChange={setOpenRowId}
+                  forceClosed={openRowId !== null && openRowId !== note.id}
                 />
               ))}
             </>
@@ -486,13 +583,13 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
           <Typography sx={{ textAlign: "center", pt: 2, fontSize: "0.78rem", color: C.mute }}>
             {listNotes.length} {listNotes.length === 1 ? "Note" : "Notes"}
           </Typography>
-        </Box>
-        <FabButton />
+        </PullToRefresh>
+        <NewNoteFab onClick={handleNewNote} />
       </Box>
     );
   }
 
-  // â”€â”€ Editor View â”€â”€
+  // -- Editor View --
   if (view === "editor" && editingNote !== null) {
     return (
       <NoteEditor
@@ -500,12 +597,19 @@ export default function NotesScreen({ onBack }: NotesScreenProps) {
         onBack={() => {
           setView(activeFolder ? "list" : "folders");
           setEditingNote(null);
-          void loadNotes();
+          void handleRefresh();
         }}
         onSave={handleSaveNote}
       />
     );
   }
 
+  // Reaching here means `view` is "list" with no folder, or "editor" with no
+  // note -- a state the machine should never produce. Recover to the folder
+  // list instead of returning null, which stranded the user on an empty page
+  // with no way back and read to them as a crash.
+  setView("folders");
+  setActiveFolder(null);
+  setEditingNote(null);
   return null;
 }
