@@ -40,7 +40,11 @@ pub struct Config {
 
     /// The OpenAI credential.
     pub openai_api_key: Option<String>,
-    /// Model used for audio transcription (e.g. whisper-1).
+    /// The Gemini API credential (Google AI Studio).
+    pub gemini_api_key: Option<String>,
+    /// Custom base URL for OpenAI-compatible endpoints (e.g. Gemini OpenAI compatible REST endpoint).
+    pub openai_base_url: Option<String>,
+    /// Model used for audio transcription (e.g. whisper-1 or gemini-2.0-flash).
     pub openai_transcription_model: String,
     /// Language hint for audio transcription (e.g. en).
     pub openai_transcription_language: Option<String>,
@@ -136,12 +140,20 @@ impl Config {
                 .ok()
                 .map(|key| key.trim().to_string())
                 .filter(|key| !key.is_empty()),
-            openai_transcription_model: env_or("OPENAI_TRANSCRIPTION_MODEL", "whisper-1"),
+            gemini_api_key: std::env::var("GEMINI_API_KEY")
+                .ok()
+                .map(|key| key.trim().to_string())
+                .filter(|key| !key.is_empty()),
+            openai_base_url: std::env::var("OPENAI_BASE_URL")
+                .ok()
+                .map(|url| url.trim().to_string())
+                .filter(|url| !url.is_empty()),
+            openai_transcription_model: env_or("OPENAI_TRANSCRIPTION_MODEL", "gemini-1.5-flash"),
             openai_transcription_language: std::env::var("OPENAI_TRANSCRIPTION_LANGUAGE")
                 .ok()
                 .map(|l| l.trim().to_string())
                 .filter(|l| !l.is_empty()),
-            model: env_or("ASSISTANT_MODEL", OpenAIConfig::DEFAULT_MODEL),
+            model: env_or("ASSISTANT_MODEL", "gemini-1.5-flash"),
             model_max_output_tokens: parse_env("ASSISTANT_MODEL_MAX_OUTPUT_TOKENS", "4096")?,
             model_timeout: Duration::from_millis(parse_env("ASSISTANT_MODEL_TIMEOUT_MS", "60000")?),
             context_max_messages: parse_env("ASSISTANT_CONTEXT_MAX_MESSAGES", "40")?,
@@ -189,8 +201,17 @@ impl Config {
 
     /// Builds the provider configuration, when this deployment has a credential.
     pub fn openai(&self) -> Option<OpenAIConfig> {
-        let key = self.openai_api_key.as_ref()?;
+        let key = self
+            .openai_api_key
+            .as_ref()
+            .or(self.gemini_api_key.as_ref())?;
         let mut cfg = OpenAIConfig::new(key);
+        if let Some(ref base_url) = self.openai_base_url {
+            cfg.base_url = base_url.clone();
+        } else if self.gemini_api_key.is_some() || self.model.starts_with("gemini") {
+            cfg.base_url =
+                "https://generativelanguage.googleapis.com/v1beta/openai".to_string();
+        }
         cfg.model = self.model.clone();
         cfg.max_output_tokens = self.model_max_output_tokens;
         cfg.timeout = self.model_timeout;

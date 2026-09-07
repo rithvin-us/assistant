@@ -32,6 +32,8 @@ pub struct AppState {
     pub documents: Option<DocumentPipeline>,
     pub http: reqwest::Client,
     pub openai_api_key: Option<String>,
+    pub gemini_api_key: Option<String>,
+    pub openai_base_url: Option<String>,
     pub openai_transcription_model: String,
     pub openai_transcription_language: Option<String>,
     pub google: Option<Arc<GoogleClient>>,

@@ -112,6 +112,8 @@ pub fn app(
         documents,
         http,
         openai_api_key: config.openai_api_key.clone(),
+        gemini_api_key: config.gemini_api_key.clone(),
+        openai_base_url: config.openai_base_url.clone(),
         openai_transcription_model: config.openai_transcription_model.clone(),
         openai_transcription_language: config.openai_transcription_language.clone(),
         google,

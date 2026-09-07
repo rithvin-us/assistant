@@ -430,6 +430,8 @@ fn test_config() -> Config {
         log_filter: "off".to_string(),
         max_tool_rounds: 4,
         openai_api_key: None,
+        gemini_api_key: None,
+        openai_base_url: None,
         openai_transcription_model: "whisper-1".to_string(),
         openai_transcription_language: None,
         model: "test-model".to_string(),

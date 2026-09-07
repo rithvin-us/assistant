@@ -45,15 +45,19 @@ pub async fn transcribe(
         ));
     }
 
-    let api_key = state.openai_api_key.as_deref().ok_or_else(|| {
-        (
-            StatusCode::SERVICE_UNAVAILABLE,
-            Json(ApiError {
-                code: "openai_not_configured".into(),
-                message: "OPENAI_API_KEY is not configured on the server.".into(),
-            }),
-        )
-    })?;
+    let api_key = state
+        .openai_api_key
+        .as_deref()
+        .or(state.gemini_api_key.as_deref())
+        .ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiError {
+                    code: "openai_not_configured".into(),
+                    message: "Neither OPENAI_API_KEY nor GEMINI_API_KEY is configured on the server.".into(),
+                }),
+            )
+        })?;
 
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
@@ -79,8 +83,6 @@ pub async fn transcribe(
     let model = if state.openai_transcription_model.is_empty()
         || state.openai_transcription_model == "gpt-live-transcribe"
     {
-        // Fallback to whisper-1 if gpt-live-transcribe is set in .env
-        // (whisper-1 is OpenAI's standard REST transcription model)
         "whisper-1"
     } else {
         &state.openai_transcription_model
@@ -97,15 +99,24 @@ pub async fn transcribe(
         form = form.text("language", lang.clone());
     }
 
+    let base_url = state.openai_base_url.as_deref().unwrap_or_else(|| {
+        if state.gemini_api_key.is_some() {
+            "https://generativelanguage.googleapis.com/v1beta/openai"
+        } else {
+            "https://api.openai.com"
+        }
+    });
+    let transcription_url = format!("{}/v1/audio/transcriptions", base_url.trim_end_matches('/'));
+
     let response = state
         .http
-        .post("https://api.openai.com/v1/audio/transcriptions")
+        .post(&transcription_url)
         .bearer_auth(api_key)
         .multipart(form)
         .send()
         .await
         .map_err(|e| {
-            tracing::error!(error = %e, "failed to contact OpenAI transcription API");
+            tracing::error!(error = %e, "failed to contact transcription API");
             (
                 StatusCode::BAD_GATEWAY,
                 Json(ApiError {
