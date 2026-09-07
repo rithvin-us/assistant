@@ -75,7 +75,6 @@ pub async fn transcribe(
         use base64::Engine;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&body);
         let mime = if content_type.is_empty() { "audio/webm" } else { content_type };
-        let data_url = format!("data:{mime};base64,{b64}");
 
         let gemini_model = if state.openai_transcription_model.starts_with("gemini") {
             &state.openai_transcription_model
@@ -84,19 +83,16 @@ pub async fn transcribe(
         };
 
         let payload = serde_json::json!({
-            "model": gemini_model,
-            "messages": [
+            "contents": [
                 {
-                    "role": "user",
-                    "content": [
+                    "parts": [
                         {
-                            "type": "text",
                             "text": "Transcribe this audio recording verbatim. Output ONLY the raw spoken text without quotes, formatting, or commentary."
                         },
                         {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": data_url
+                            "inlineData": {
+                                "mimeType": mime,
+                                "data": b64
                             }
                         }
                     ]
@@ -104,21 +100,18 @@ pub async fn transcribe(
             ]
         });
 
-        let base_url = state
-            .openai_base_url
-            .as_deref()
-            .unwrap_or("https://generativelanguage.googleapis.com/v1beta/openai");
-        let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
+        let url = format!(
+            "https://generativelanguage.googleapis.com/v1beta/models/{gemini_model}:generateContent?key={api_key}"
+        );
 
         let response = state
             .http
             .post(&url)
-            .bearer_auth(api_key)
             .json(&payload)
             .send()
             .await
             .map_err(|e| {
-                tracing::error!(error = %e, "failed to contact Gemini transcription API");
+                tracing::error!(error = %e, "failed to contact Gemini generateContent API");
                 (
                     StatusCode::BAD_GATEWAY,
                     Json(ApiError {
@@ -143,6 +136,7 @@ pub async fn transcribe(
             let msg = resp_json["error"]["message"]
                 .as_str()
                 .unwrap_or("Gemini transcription failed");
+            tracing::error!(status = %status, error_message = %msg, "Gemini transcription error response");
             return Err((
                 StatusCode::BAD_GATEWAY,
                 Json(ApiError {
@@ -152,7 +146,7 @@ pub async fn transcribe(
             ));
         }
 
-        let transcribed_text = resp_json["choices"][0]["message"]["content"]
+        let transcribed_text = resp_json["candidates"][0]["content"]["parts"][0]["text"]
             .as_str()
             .unwrap_or("")
             .trim()
