@@ -27,6 +27,7 @@ import FormControl from "@mui/material/FormControl";
 import InputLabel from "@mui/material/InputLabel";
 import IconButton from "@mui/material/IconButton";
 import Fab from "@mui/material/Fab";
+import ButtonBase from "@mui/material/ButtonBase";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
@@ -34,6 +35,10 @@ import EventNoteRoundedIcon from "@mui/icons-material/EventNoteRounded";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 import FormatListBulletedRoundedIcon from "@mui/icons-material/FormatListBulletedRounded";
 import MoreVertRoundedIcon from "@mui/icons-material/MoreVertRounded";
+import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
+
+import SwipeableRow from "../components/SwipeableRow";
+import { haptic } from "../lib/haptics";
 
 import TodoistCheckbox from "../components/TodoistCheckbox";
 import TodoistQuickAdd from "../components/TodoistQuickAdd";
@@ -57,6 +62,8 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
 
   const [quickAddOpen, setQuickAddOpen] = useState(false);
 
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [openRowId, setOpenRowId] = useState<string | null>(null);
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskItem | null>(null);
   const [taskTitle, setTaskTitle] = useState("");
@@ -170,24 +177,38 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
   };
 
   const handleToggleTaskComplete = async (task: TaskItem) => {
+    const previousStatus = task.status;
     const nextStatus = task.status === "completed" ? "todo" : "completed";
+    // Optimistic on purpose: completion is frequent and reversible, and a
+    // checkbox that waits for a round trip feels broken. The rollback below is
+    // what keeps it honest.
+    setTasks((prev) =>
+      prev.map((t) => (t.id === task.id ? { ...t, status: nextStatus } : t))
+    );
+    if (nextStatus === "completed") haptic("success");
     try {
-      setTasks((prev) =>
-        prev.map((t) => (t.id === task.id ? { ...t, status: nextStatus } : t))
-      );
       await updateTask(task.id, { status: nextStatus });
+      setActionError(null);
       await loadData();
     } catch (err) {
-      console.error(err);
+      setTasks((prev) =>
+        prev.map((t) => (t.id === task.id ? { ...t, status: previousStatus } : t))
+      );
+      setActionError(
+        err instanceof Error ? err.message : "Could not update task.",
+      );
     }
   };
 
   const handleDeleteTask = async (id: string) => {
+    // Server first. Dropping the row before the request meant a rejected or
+    // failed delete still looked like a success until the next poll.
     try {
-      setTasks((prev) => prev.filter((t) => t.id !== id));
       await deleteTask(id);
+      setTasks((prev) => prev.filter((t) => t.id !== id));
+      setActionError(null);
     } catch (err) {
-      console.error(err);
+      setActionError(err instanceof Error ? err.message : "Could not delete task.");
     }
   };
 
@@ -307,14 +328,49 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
       {/* Main Task List */}
       <Box sx={{ flexGrow: 1, overflowY: quickAddOpen ? "hidden" : "auto", px: 2, pb: 12, position: "relative" }}>
         <Box sx={{ display: "flex", flexDirection: "column" }}>
+          {actionError && (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, py: 1.5 }}>
+              <Typography sx={{ flex: 1, fontSize: "0.82rem", color: "#D1453B" }}>
+                {actionError}
+              </Typography>
+              <ButtonBase
+                onClick={() => setActionError(null)}
+                sx={{ px: 1.5, py: 0.5, borderRadius: 1, fontSize: "0.82rem", fontWeight: 600, color: "#666666" }}
+              >
+                Dismiss
+              </ButtonBase>
+            </Box>
+          )}
           {tasks.length === 0 ? (
             <Typography color="#888888" sx={{ py: 6, textAlign: "center", fontSize: "0.95rem" }}>
               No tasks found. Tap + to add a task.
             </Typography>
           ) : (
             tasks.map((t) => (
-              <Box
+              <SwipeableRow
                 key={t.id}
+                background="#FFFFFF"
+                onOpenChange={(isOpen) => setOpenRowId(isOpen ? t.id : null)}
+                forceClosed={openRowId !== null && openRowId !== t.id}
+                actions={[
+                  {
+                    id: "complete",
+                    label: t.status === "completed" ? "Reopen" : "Done",
+                    icon: <CheckRoundedIcon sx={{ fontSize: 19 }} />,
+                    color: "#058527",
+                    onPress: () => handleToggleTaskComplete(t),
+                  },
+                  {
+                    id: "delete",
+                    label: "Delete",
+                    icon: <DeleteOutlineRoundedIcon sx={{ fontSize: 19 }} />,
+                    color: "#D1453B",
+                    destructive: true,
+                    onPress: () => handleDeleteTask(t.id),
+                  },
+                ]}
+              >
+              <Box
                 sx={{
                   minHeight: 56,
                   display: "flex",
@@ -394,11 +450,17 @@ export default function TasksScreen({ onBack }: TasksScreenProps) {
                   </Box>
                 </Box>
 
-                {/* Delete IconButton */}
-                <IconButton size="small" onClick={() => void handleDeleteTask(t.id)}>
+                {/* Delete IconButton -- the non-gesture route to the same
+                    action the swipe tray exposes. */}
+                <IconButton
+                  size="small"
+                  aria-label={`Delete task: ${t.title}`}
+                  onClick={() => void handleDeleteTask(t.id)}
+                >
                   <DeleteOutlineRoundedIcon sx={{ fontSize: 18, color: "#999999", "&:hover": { color: "#DC4C3E" } }} />
                 </IconButton>
               </Box>
+              </SwipeableRow>
             ))
           )}
         </Box>
