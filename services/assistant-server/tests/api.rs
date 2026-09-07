@@ -138,7 +138,7 @@ async fn next_frame(socket: &mut Socket) -> ServerFrame {
         if let tungstenite::Message::Text(text) = message {
             // Parsing as `ServerFrame` is itself the assertion that the server
             // never emits something outside the published protocol.
-            return serde_json::from_str(&text)
+            return serde_json::from_str(text.as_str())
                 .unwrap_or_else(|e| panic!("server sent an invalid frame: {e}\n{text}"));
         }
     }
