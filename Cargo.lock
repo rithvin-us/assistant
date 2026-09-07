@@ -241,8 +241,10 @@ dependencies = [
  "assistant-planning",
  "assistant-protocol",
  "assistant-tools",
+ "assistant-voice",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "dotenvy",
  "futures",
  "lopdf",
@@ -274,6 +276,22 @@ dependencies = [
  "thiserror 2.0.20",
  "time",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "assistant-voice"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "dotenvy",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.20",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 

@@ -9,6 +9,7 @@ members = [
     "crates/assistant-memory",
     "crates/assistant-documents",
     "crates/assistant-planning",
+    "crates/assistant-voice",
     "services/assistant-server",
     "apps/mobile/src-tauri",
 ]
@@ -30,6 +31,7 @@ assistant-auth = { path = "crates/assistant-auth" }
 assistant-memory = { path = "crates/assistant-memory" }
 assistant-documents = { path = "crates/assistant-documents" }
 assistant-planning = { path = "crates/assistant-planning" }
+assistant-voice = { path = "crates/assistant-voice" }
 
 # Async runtime and HTTP.
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
@@ -78,6 +80,7 @@ futures = "0.3"
 dotenvy = "0.15"
 # Credential encryption at rest (ADR-0025)
 aes-gcm = "0.10"
+base64 = "0.22"
 
 # Profiles must live at the workspace root; `apps/mobile/src-tauri` is a member,
 # so its release tuning is declared here. See docs/DECISIONS.md ADR-0002.
