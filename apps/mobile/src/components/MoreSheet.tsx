@@ -1,7 +1,8 @@
 /**
  * Navigation Drawer / More Sheet.
  *
- * Provides access to productivity tools and Google integrations.
+ * Reduced to core requested tools: Voice Assistant, Notes, Tasks, Documents,
+ * Classroom, Calendar, Gmail, and Connected Accounts.
  */
 
 import Box from "@mui/material/Box";
@@ -13,16 +14,16 @@ import ListItemButton from "@mui/material/ListItemButton";
 import ListItemIcon from "@mui/material/ListItemIcon";
 import ListItemText from "@mui/material/ListItemText";
 import Typography from "@mui/material/Typography";
+import IconButton from "@mui/material/IconButton";
 import DescriptionOutlinedIcon from "@mui/icons-material/DescriptionOutlined";
 import ChecklistRoundedIcon from "@mui/icons-material/ChecklistRounded";
 import EventRoundedIcon from "@mui/icons-material/EventRounded";
 import MailOutlineRoundedIcon from "@mui/icons-material/MailOutlineRounded";
 import GoogleIcon from "@mui/icons-material/Google";
 import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
-import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
-import AutoStoriesOutlinedIcon from "@mui/icons-material/AutoStoriesOutlined";
-import InsightsRoundedIcon from "@mui/icons-material/InsightsRounded";
 import CloudDoneOutlinedIcon from "@mui/icons-material/CloudDoneOutlined";
+import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
+import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 
 import type { ConnectionState } from "../api/bridge";
 import type { ScreenType } from "../App";
@@ -40,46 +41,19 @@ export default function MoreSheet({
 }) {
   const FEATURES = [
     {
-      icon: <ChecklistRoundedIcon sx={{ color: "#10B981" }} />,
-      label: "Planning",
-      note: "Unified schedule, commitments, deadlines & feasibility",
+      icon: <GraphicEqRoundedIcon sx={{ color: "#7C3AED" }} />,
+      label: "Voice Assistant",
+      note: "Return to SiriWave voice interface",
       enabled: true,
-      screen: "planning" as ScreenType,
+      screen: "home" as ScreenType,
+      highlight: true,
     },
     {
-      icon: <InsightsRoundedIcon sx={{ color: "#7C3AED" }} />,
-      label: "Memory",
-      note: "Preferences, facts & commitments the assistant remembers",
+      icon: <DescriptionOutlinedIcon sx={{ color: "#2563EB" }} />,
+      label: "Notes",
+      note: "Auto-saving notes & tags",
       enabled: true,
-      screen: "memory" as ScreenType,
-    },
-    {
-      icon: <CloudDoneOutlinedIcon sx={{ color: "#2563EB" }} />,
-      label: "Documents",
-      note: "Upload, search and read PDFs and text files",
-      enabled: true,
-      screen: "documents" as ScreenType,
-    },
-    {
-      icon: <AutoStoriesOutlinedIcon sx={{ color: "#7C3AED" }} />,
-      label: "Academic",
-      note: "Deadlines, coursework & announcements",
-      enabled: true,
-      screen: "academic" as ScreenType,
-    },
-    {
-      icon: <SchoolOutlinedIcon sx={{ color: "#0F9D58" }} />,
-      label: "Classroom",
-      note: "Courses, coursework & announcements",
-      enabled: true,
-      screen: "classroom" as ScreenType,
-    },
-    {
-      icon: <FolderOutlinedIcon sx={{ color: "#F4B400" }} />,
-      label: "Drive",
-      note: "Search files & open documents",
-      enabled: true,
-      screen: "drive" as ScreenType,
+      screen: "notes" as ScreenType,
     },
     {
       icon: <ChecklistRoundedIcon sx={{ color: "#DC4C3E" }} />,
@@ -89,11 +63,18 @@ export default function MoreSheet({
       screen: "tasks" as ScreenType,
     },
     {
-      icon: <DescriptionOutlinedIcon sx={{ color: "#2563EB" }} />,
-      label: "Notes",
-      note: "Auto-saving notes & tags",
+      icon: <CloudDoneOutlinedIcon sx={{ color: "#2563EB" }} />,
+      label: "Documents",
+      note: "Upload, search and read PDFs and text files",
       enabled: true,
-      screen: "notes" as ScreenType,
+      screen: "documents" as ScreenType,
+    },
+    {
+      icon: <SchoolOutlinedIcon sx={{ color: "#0F9D58" }} />,
+      label: "Classroom",
+      note: "Courses, coursework & announcements",
+      enabled: true,
+      screen: "classroom" as ScreenType,
     },
     {
       icon: <EventRoundedIcon sx={{ color: "#1A73E8" }} />,
@@ -130,6 +111,7 @@ export default function MoreSheet({
             borderTopRightRadius: 20,
             pb: "env(safe-area-inset-bottom)",
             bgcolor: "#FFFFFF",
+            maxHeight: "85vh",
           },
         },
       }}
@@ -143,23 +125,37 @@ export default function MoreSheet({
           bgcolor: "#E0E0E0",
           mx: "auto",
           mt: 1.5,
-          mb: 1.5,
+          mb: 1,
         }}
       />
 
-      <Box sx={{ px: 2, pb: 1, display: "flex", alignItems: "center", gap: 1.25 }}>
-        <Box
-          component="img"
-          src="/logo.png"
-          alt="Logo"
-          sx={{ width: 28, height: 28, borderRadius: "50%", objectFit: "contain" }}
-        />
-        <Typography variant="subtitle1" sx={{ fontWeight: 700, color: "#202020" }}>
-          Personal Assistant
-        </Typography>
+      {/* Header bar with title and close button */}
+      <Box
+        sx={{
+          px: 2,
+          pb: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <Box sx={{ display: "flex", alignItems: "center", gap: 1.25 }}>
+          <Box
+            component="img"
+            src="/logo.png"
+            alt="Logo"
+            sx={{ width: 28, height: 28, borderRadius: "50%", objectFit: "contain" }}
+          />
+          <Typography variant="subtitle1" sx={{ fontWeight: 700, color: "#202020" }}>
+            Personal Assistant
+          </Typography>
+        </Box>
+        <IconButton size="small" onClick={onClose} aria-label="Close drawer">
+          <CloseRoundedIcon sx={{ fontSize: 20, color: "#666666" }} />
+        </IconButton>
       </Box>
 
-      <List sx={{ px: 1, pb: 1 }}>
+      <List sx={{ px: 1, pb: 1, overflowY: "auto" }}>
         {FEATURES.map((feature) => (
           <ListItemButton
             key={feature.label}
@@ -172,13 +168,22 @@ export default function MoreSheet({
               borderRadius: 2,
               mb: 0.5,
               py: 1,
-              "&:hover": { bgcolor: "#F5F5F5" },
+              bgcolor: feature.highlight ? "rgba(124, 58, 237, 0.06)" : "transparent",
+              "&:hover": {
+                bgcolor: feature.highlight ? "rgba(124, 58, 237, 0.12)" : "#F5F5F5",
+              },
             }}
           >
             <ListItemIcon sx={{ minWidth: 40 }}>{feature.icon}</ListItemIcon>
             <ListItemText
               primary={
-                <Typography variant="body2" sx={{ fontWeight: 600, color: "#202020" }}>
+                <Typography
+                  variant="body2"
+                  sx={{
+                    fontWeight: feature.highlight ? 700 : 600,
+                    color: feature.highlight ? "#7C3AED" : "#202020",
+                  }}
+                >
                   {feature.label}
                 </Typography>
               }
