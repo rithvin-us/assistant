@@ -25,6 +25,7 @@ import InputAdornment from "@mui/material/InputAdornment";
 import TextField from "@mui/material/TextField";
 import Typography from "@mui/material/Typography";
 import ArrowUpwardRoundedIcon from "@mui/icons-material/ArrowUpwardRounded";
+import { VoiceController } from "./VoiceController";
 
 import {
   closeConversation,
@@ -297,7 +298,25 @@ export default function ConversationSheet({
           slotProps={{
             input: {
               endAdornment: (
-                <InputAdornment position="end">
+                <InputAdornment position="end" sx={{ gap: 0.5 }}>
+                  <VoiceController
+                    disabled={busy}
+                    onTranscriptReady={(transcript) => {
+                      if (transcript.trim().length > 0) {
+                        setDraft(transcript);
+                        // Send turn automatically
+                        const text = transcript.trim();
+                        setDraft("");
+                        setTurn("sending");
+                        setError(null);
+                        setMessages((current) => [
+                          ...current,
+                          { id: crypto.randomUUID(), role: "user", text },
+                        ]);
+                        sendUserText(text);
+                      }
+                    }}
+                  />
                   <IconButton
                     aria-label="Send"
                     size="small"

@@ -8,7 +8,16 @@
  */
 
 /** Must equal `assistant_protocol::PROTOCOL_VERSION`. */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 9;
+
+export type VoiceState =
+  | "idle"
+  | "listening"
+  | "transcribing"
+  | "thinking"
+  | "speaking"
+  | "interrupted"
+  | "error";
 
 export type HealthStatus = "ok" | "degraded";
 
@@ -32,16 +41,12 @@ export type ClientFrame =
   | { type: "user_text"; text: string }
   /** Ask for the approvals this user still has to answer. */
   | { type: "list_pending_approvals" }
-  /**
-   * Answer a pending approval.
-   *
-   * The id is the only thing the client gets to say. It cannot name a tool,
-   * supply arguments, assert a risk, or claim to be another user: the server
-   * loads the persisted action by id, scoped to the authenticated principal,
-   * and that record is authoritative.
-   */
   | { type: "approve_action"; approval_id: string }
-  | { type: "reject_action"; approval_id: string };
+  | { type: "reject_action"; approval_id: string }
+  | { type: "voice_start" }
+  | { type: "voice_audio_chunk"; data_base64: string; encoding: string }
+  | { type: "voice_cancel" }
+  | { type: "voice_interrupted" };
 
 /** One row in the approval sheet. Carries no argument values. */
 export interface PendingApproval {
@@ -67,13 +72,7 @@ export type ApprovalOutcome =
   | { state: "no_longer_permitted"; execution_id: string; reason: string }
   | { state: "not_found" };
 
-/**
- * Risk classification of a tool, for display only.
- *
- * The server decides what may run, against its own tool registry. A client must
- * never treat this as authority to execute anything -- it exists so an approval
- * prompt can be shown proportionately.
- */
+/** Risk classification of a tool, for display only. */
 export type RiskLevel = "green" | "yellow" | "orange" | "red";
 
 /** Frames the server sends back. */
@@ -90,13 +89,7 @@ export type ServerFrame =
       name: string;
       risk: RiskLevel;
       reason: string;
-      /**
-       * The durable approval to answer. `null` means the server has no database
-       * configured, so the action was not persisted and cannot be approved --
-       * show it as a notice, not an Approve button.
-       */
       approval_id: string | null;
-      /** The tool and the names of its arguments, never their values. */
       summary: string;
     }
   | { type: "pending_approvals"; approvals: PendingApproval[] }
@@ -108,6 +101,11 @@ export type ServerFrame =
   /** A tool finished. `ok` is false for a handled failure, which does not end the turn. */
   | { type: "tool_completed"; call_id: string; name: string; ok: boolean }
   | { type: "turn_end"; message_id: string }
+  | { type: "voice_state_changed"; state: VoiceState }
+  | { type: "voice_transcript_partial"; text: string }
+  | { type: "voice_transcript_final"; text: string }
+  | { type: "voice_tts_chunk"; audio_base64: string; is_final: boolean }
+  | { type: "voice_end" }
   | { type: "error"; code: string; message: string };
 
 /** A user-owned project. Mirrors `assistant_protocol::ProjectItem`. */
