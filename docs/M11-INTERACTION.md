@@ -173,11 +173,31 @@ Commands run, with actual results:
 | `cargo clippy --workspace --all-targets -- -D warnings` | pass |
 | `cargo test --workspace --no-fail-fast` | see below |
 
-`cargo test` fails in two suites, `documents` (9/18) and `memory` (15/21), all
-with `relation "..." does not exist`. This is unapplied migrations in the local
-Postgres, confirmed pre-existing by re-running against a stashed tree and
-getting identical counts. Run `scripts/migrate.ps1`. Not an M11 regression, and
-it means the documents pipeline is **unverified**, not "working".
+`cargo test` previously failed in two suites, `documents` (9/18) and `memory`
+(15/21), all with `relation "..." does not exist`. Migrations 0009-0011 were
+pending on the database. After applying them with `sqlx migrate run --source
+migrations`, memory passes 21/21 and documents passes 17/18.
+
+The one remaining documents failure is
+`upload_rejects_body_over_the_size_limit_with_400`, and it is a Windows
+artifact rather than a defect: the server correctly rejects the oversized body
+and closes the connection, but Windows surfaces `WSAECONNABORTED (10053)` to
+the client before it can read the 400 response.
+
+### Documents pipeline
+
+Verified end to end against the running server, not inferred:
+
+| Step | Result |
+| --- | --- |
+| `POST /v1/documents` (raw body, `X-Filename`) | 200, `processing_state: "indexed"`, `page_count: 1` |
+| `GET /v1/documents/{id}/pages` | page stored, `extraction_method: "native_text"`, content intact |
+| `GET /v1/documents/search?q=` | returns the document with snippet and score |
+| `DELETE /v1/documents/{id}` | 200; search then returns `[]` |
+
+Note the upload route takes a **raw body** with the document's own
+`Content-Type` plus an `X-Filename` header. It is not multipart — posting
+`multipart/form-data` returns `400 unsupported document type`.
 
 ### Android build
 
@@ -224,9 +244,8 @@ and haptics (inert, see above).
 
 M11 is partial. Honestly scoped, the following remain:
 
-- Pull-to-refresh on Documents, Classroom, Calendar, Gmail, Drive, Planning and
-  Connections. These are read-mostly or account-gated and were left alone rather
-  than rushed.
+- Pull-to-refresh on Gmail and Drive. Both hand-roll their own drawer drags
+  (below) and should be done together with that cleanup.
 - Drag-to-reorder.
 - List insertion/removal animation.
 - `GmailScreen` and `DriveScreen` still hand-roll drawer drags with raw
@@ -240,10 +259,13 @@ M11 is partial. Honestly scoped, the following remain:
 
 Not fixed here, because they are outside M11 scope:
 
-- **Six built screens are unreachable.** `App.tsx` renders 14 screens;
-  `MoreSheet` exposes 7. Reminders, Ideas, Drive, Academic, Memory and Planning
-  have no entry point, and `ProductivityScreen.tsx` is not wired into `App.tsx`
-  at all. They ship in the bundle but no user can open them.
+- **Seven built screens are unreachable.** `App.tsx` renders 14 screens;
+  `MoreSheet` now exposes 6. Reminders, Ideas, Drive, Academic, Memory,
+  Planning and — as of this change, deliberately — Documents have no entry
+  point, and `ProductivityScreen.tsx` is not wired into `App.tsx` at all. They
+  ship in the bundle but no user can open them. Documents was removed from the
+  drawer on request to keep it minimal, once the pipeline was verified working;
+  it needs an entry point from somewhere real before it is usable again.
 - **One orphaned route.** `POST /v1/planning/plan` has no caller in
   `apps/mobile/src/api/`.
 - **Bundle size.** One 743 kB chunk with no code splitting. It is the app's
@@ -252,3 +274,8 @@ Not fixed here, because they are outside M11 scope:
   the animated SiriWave surface. Worth measuring before it becomes jank.
 - **The Notes editor shows "Auto-saved" before anything has been typed or
   saved**, which claims a persistence event that did not occur.
+- **Migrations are not part of any startup or deploy check.** The app gave no
+  hint that the schema was three migrations behind; Documents simply 500'd and
+  the screen rewrote that into a reassuring message. A readiness check that
+  compares applied migrations against `migrations/` would have named the cause
+  immediately.
