@@ -199,6 +199,60 @@ Voice gains the model no additional authority: a voice turn builds the same
 `TurnRequest` and runs through the same `run_turn`, so the same permission
 policy, approval requirements and tool executor apply.
 
+## Deployed verification
+
+Against `assistant-server-vbrv.onrender.com` running this branch, after the
+`CARTESIA_API_KEY` was added to its environment:
+
+| Check | Result |
+| --- | --- |
+| `GET /v1/health` | `protocol_version: 10` — matches the app, no mismatch |
+| `GET /v1/voice/diagnostic` | `cartesia_configured: true`, `ink-whisper`, `sonic-3.6`, `ready` |
+| `POST /v1/voice/speak` | 200, 99 918 bytes of real WAV |
+| `POST /v1/voice/transcribe` (Cartesia) | 200, transcribed the synthesised phrase back verbatim |
+| `POST /v1/audio/transcribe` (Whisper) | **502** — "You have no credits remaining" |
+| `GET /v1/documents`, `GET /v1/memories` | 200 — the deployment shares the migrated Supabase database |
+
+So the Cartesia leg is proven end to end in production. The corrected model ids
+and API version are what made that possible; the previous values returned
+`400 invalid model`.
+
+### The remaining blocker is one account, not the code
+
+`OPENAI_API_KEY` gates **two** legs, not one:
+
+- speech-to-text, because the app transcribes through `/v1/audio/transcribe`
+  (OpenAI Whisper), not through Cartesia;
+- the assistant turn itself — `main.rs` builds an `OpenAIModelProvider`, so the
+  model call runs on the same key.
+
+Until that account has credit, no voice turn can complete regardless of what the
+voice layer does. Cartesia is funded and working.
+
+Worth noting: **Cartesia STT is available and working right now**, and the app
+does not use it. Moving the app's transcription from Whisper to
+`/v1/voice/transcribe` would remove one dependency on the blocked account and
+make the voice stack single-provider. It would not unblock a full turn on its
+own, because the assistant brain is still OpenAI. Changing a model provider
+needs an ADR under this repository's rules, so it is recorded here as an option
+rather than taken.
+
+## Device verification
+
+On the physical device (`adb` serial `1025f519`), with this branch installed:
+
+| Check | Result |
+| --- | --- |
+| App launches against the deployed server | connected, no protocol mismatch |
+| `RECORD_AUDIO` declared | present after the manifest fix; was absent entirely |
+| Microphone permission granted | `granted=true` |
+| Microphone denied | shows "Microphone access is off…" — previously a fake waveform |
+| Push-to-talk capture | "Listening…" with live timer and Android's mic indicator lit |
+
+Not yet exercised on device: a complete spoken turn, barge-in during playback,
+a contextual follow-up, a tool call, and an approval-required action. All five
+need a working transcription leg.
+
 ## Known limitations
 
 - **Not verified on the device end to end.** See the verification section of the
