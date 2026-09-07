@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// Bumped whenever a breaking change is made to the types in this crate. The
 /// client sends the version it was built against so the server can reject a
 /// mismatched build instead of misparsing it.
-pub const PROTOCOL_VERSION: u32 = 8;
+pub const PROTOCOL_VERSION: u32 = 9;
 
 pub type ConversationId = Uuid;
 pub type MessageId = Uuid;
@@ -46,11 +46,6 @@ pub struct ApiError {
 }
 
 /// Frames sent by the client over `WS /v1/conversation/:id/stream`.
-///
-/// The variants below are the minimum needed to prove the transport works.
-/// Voice frames (audio chunks, barge-in) and tool-approval frames are future
-/// additions; the enum is `#[non_exhaustive]`-shaped by convention so adding
-/// them is not a breaking change for the server.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ClientFrame {
@@ -65,24 +60,27 @@ pub enum ClientFrame {
     ListPendingApprovals,
 
     /// Answer a pending approval.
-    ///
-    /// The id is the *only* thing the client gets to say. It cannot name a tool,
-    /// supply arguments, assert a risk level, or claim to be a different user:
-    /// the server loads the persisted action by id, scoped to the authenticated
-    /// principal, and that record is authoritative. See ADR-0015.
     ApproveAction {
         approval_id: ApprovalId,
     },
     RejectAction {
         approval_id: ApprovalId,
     },
+
+    /// Start a voice session.
+    VoiceStart,
+    /// Send an audio chunk for live transcription (base64 encoded).
+    VoiceAudioChunk {
+        data_base64: String,
+        encoding: String,
+    },
+    /// Cancel the active voice session.
+    VoiceCancel,
+    /// Signal barge-in / interruption (user tapped mic while assistant was speaking).
+    VoiceInterrupted,
 }
 
 /// Frames sent by the server over the conversation socket.
-///
-/// Assistant output is modelled as a stream of deltas terminated by
-/// [`ServerFrame::TurnEnd`] so that token streaming and, later, streamed audio
-/// need no change to the transport shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ServerFrame {
@@ -99,10 +97,6 @@ pub enum ServerFrame {
     },
 
     /// The assistant asked to use a tool. It has not run and may never run.
-    ///
-    /// `risk` is the authoritative classification from the server's tool
-    /// registry. It is never anything the model supplied, and a client may rely
-    /// on that when deciding how prominently to show the call.
     ToolProposed {
         call_id: String,
         name: String,
@@ -110,24 +104,34 @@ pub enum ServerFrame {
     },
 
     /// The turn stopped and is waiting for the user to approve a tool.
-    ///
-    /// Nothing has run. The client is expected to show an approval prompt; until
-    /// a decision arrives the turn stays stopped.
     ApprovalRequired {
         call_id: String,
         name: String,
         risk: RiskLevel,
         reason: String,
-        /// The durable approval to answer with [`ClientFrame::ApproveAction`].
-        ///
-        /// `None` means the server has no durable store configured, so the
-        /// action was not persisted and cannot be answered. A client must show
-        /// this as an unactionable notice rather than an Approve button.
         approval_id: Option<ApprovalId>,
-        /// Sanitised description of the action: the tool and the names of its
-        /// arguments, never their values. See ADR-0016.
         summary: String,
     },
+
+    /// Voice state updated.
+    VoiceStateChanged {
+        state: String,
+    },
+    /// Partial live STT transcript.
+    VoiceTranscriptPartial {
+        text: String,
+    },
+    /// Final STT transcript.
+    VoiceTranscriptFinal {
+        text: String,
+    },
+    /// TTS audio chunk (base64 encoded).
+    VoiceTtsChunk {
+        audio_base64: String,
+        is_final: bool,
+    },
+    /// Voice response turn finished.
+    VoiceEnd,
 
     /// The approvals this user still has to answer.
     PendingApprovals {
