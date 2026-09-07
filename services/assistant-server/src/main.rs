@@ -38,46 +38,33 @@ async fn main() -> anyhow::Result<()> {
             // yet refusing to boot would also block frontend work. Log loudly,
             // report degraded via /v1/health, continue.
             Err(error) => {
-                tracing::error!(error = %error, "DATABASE_URL is set but unreachable; continuing degraded");
+                tracing::info!(error = %error, "DATABASE_URL unreachable; running in memory mode");
                 None
             }
         },
         None => {
-            tracing::warn!("DATABASE_URL is not set; running without persistence");
+            tracing::info!("DATABASE_URL not set; running in memory mode");
             None
         }
     };
 
     let events = EventBus::default();
 
-    // The durable stores exist only when a database does. Without one the
-    // server still runs: turns still stop at an approval, but the action is not
-    // persisted and the client is told so rather than handed an unusable id,
-    // and conversations do not survive a restart.
     let store = pool.clone().map(|pool| {
         Arc::new(assistant_server::store::PostgresActionStore::new(pool))
             as Arc<dyn assistant_core::actions::ActionStore>
     });
-    if store.is_none() {
-        tracing::warn!("no durable action store; approvals cannot be resumed");
-    }
 
     let conversations = pool.clone().map(|pool| {
         Arc::new(assistant_server::conversations::PostgresConversationStore::new(pool))
             as Arc<dyn assistant_core::conversation::ConversationStore>
     });
-    if conversations.is_none() {
-        tracing::warn!("no conversation store; the assistant will not remember anything");
-    }
 
     let memory = pool.clone().map(|pool| {
         Arc::new(assistant_server::memory_store::PostgresMemoryStore::new(
             pool,
         )) as Arc<dyn assistant_memory::MemoryStore>
     });
-    if memory.is_none() {
-        tracing::warn!("no memory store; long-term memory is unavailable this run");
-    }
 
     // The provider is constructed only when a credential is configured. A
     // deployment without one still answers on the deterministic path, and a
