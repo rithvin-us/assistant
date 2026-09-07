@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// Bumped whenever a breaking change is made to the types in this crate. The
 /// client sends the version it was built against so the server can reject a
 /// mismatched build instead of misparsing it.
-pub const PROTOCOL_VERSION: u32 = 7;
+pub const PROTOCOL_VERSION: u32 = 8;
 
 pub type ConversationId = Uuid;
 pub type MessageId = Uuid;
@@ -846,4 +846,26 @@ pub struct DocumentSearchHit {
 pub struct IngestFromDriveRequest {
     pub account_id: Uuid,
     pub file_id: String,
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 9 -- unified personal planning
+// ---------------------------------------------------------------------------
+
+/// Request payload for `/v1/planning/analyze`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanningAnalysisRequest {
+    #[serde(default)]
+    pub horizon_days: Option<u32>,
+    #[serde(default)]
+    pub target_date: Option<String>,
+}
+
+/// Request payload for `/v1/planning/plan`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlanGenerationRequest {
+    #[serde(default)]
+    pub start_date: Option<String>,
+    #[serde(default)]
+    pub days: Option<u32>,
 }

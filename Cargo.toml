@@ -8,6 +8,7 @@ members = [
     "crates/assistant-auth",
     "crates/assistant-memory",
     "crates/assistant-documents",
+    "crates/assistant-planning",
     "services/assistant-server",
     "apps/mobile/src-tauri",
 ]
@@ -28,6 +29,7 @@ assistant-tools = { path = "crates/assistant-tools" }
 assistant-auth = { path = "crates/assistant-auth" }
 assistant-memory = { path = "crates/assistant-memory" }
 assistant-documents = { path = "crates/assistant-documents" }
+assistant-planning = { path = "crates/assistant-planning" }
 
 # Async runtime and HTTP.
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }

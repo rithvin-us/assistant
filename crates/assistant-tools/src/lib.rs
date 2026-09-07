@@ -102,6 +102,7 @@ pub enum ToolError {
 
 pub mod academic_tools;
 pub mod google_tools;
+pub mod planning_tools;
 pub mod providers;
 
 pub use academic_tools::{
@@ -112,6 +113,10 @@ pub use academic_tools::{
 pub use google_tools::{
     CalendarCreateTool, CalendarDeleteTool, CalendarListTool, CalendarSearchTool,
     CalendarUpdateTool, GmailReadTool, GmailSearchTool,
+};
+pub use planning_tools::{
+    AnalyzeScheduleTool, CheckFeasibilityTool, DetectConflictsTool, GetTodayPlanTool,
+    GetUpcomingDeadlinesTool, PlanningProvider,
 };
 pub use providers::{
     AcademicDeadline, AcademicOverview, AcademicProvider, AcademicSyncResult, Announcement,

@@ -14,6 +14,7 @@ pub mod error;
 pub mod google;
 pub mod memory_store;
 pub mod orchestration;
+pub mod planning;
 pub mod prompt;
 pub mod routes;
 pub mod state;

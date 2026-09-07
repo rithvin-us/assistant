@@ -9,6 +9,7 @@ pub mod documents;
 pub mod google;
 pub mod health;
 pub mod memory;
+pub mod planning;
 pub mod productivity;
 pub mod transcribe;
 
@@ -156,6 +157,15 @@ pub fn router(state: SharedState) -> Router {
             "/v1/documents/from-drive",
             post(documents::ingest_from_drive),
         )
+        // Unified Personal Planning (M9)
+        .route("/v1/planning/today", get(planning::get_today_plan))
+        .route(
+            "/v1/planning/upcoming",
+            get(planning::get_upcoming_planning),
+        )
+        .route("/v1/planning/analyze", post(planning::analyze_planning))
+        .route("/v1/planning/plan", post(planning::generate_plan))
+        .route("/v1/planning/conflicts", get(planning::get_conflicts))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,
