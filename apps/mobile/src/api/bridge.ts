@@ -19,10 +19,20 @@ export const isTauri =
   ("__TAURI_INTERNALS__" in window || "__TAURI_PATTERN__" in window || "__TAURI__" in window);
 
 /**
- * Where the development server lives. Overridable at build time because an
- * Android device cannot reach the host's `localhost`.
+ * Where the assistant server lives. A production build (`vite build`, which is
+ * what `pnpm tauri android build` runs) falls back to the deployed Render
+ * service, so an installed APK reaches a server without any per-device
+ * configuration. A dev build (`pnpm dev` / `pnpm tauri dev`) falls back to
+ * localhost, so a workstation still talks to `cargo run -p assistant-server`.
+ * `VITE_SERVER_BASE_URL` overrides both — set it in `apps/mobile/.env` for
+ * physical-device dev builds against a LAN address, or against a staging URL.
  */
-const rawServerUrl = import.meta.env.VITE_SERVER_BASE_URL ?? "http://127.0.0.1:8787";
+const PROD_SERVER_URL = "https://assistant-server-vbrv.onrender.com";
+const DEV_SERVER_URL = "http://127.0.0.1:8787";
+
+const rawServerUrl =
+  import.meta.env.VITE_SERVER_BASE_URL ??
+  (import.meta.env.PROD ? PROD_SERVER_URL : DEV_SERVER_URL);
 
 export const SERVER_BASE_URL: string = rawServerUrl;
 
