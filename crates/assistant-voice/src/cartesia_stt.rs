@@ -27,7 +27,7 @@ impl CartesiaSttProvider {
         Self {
             client: reqwest::Client::new(),
             api_key,
-            model: model.unwrap_or_else(|| "sonic".to_string()),
+            model: model.unwrap_or_else(|| "ink-en-us".to_string()),
             endpoint: "https://api.cartesia.ai/stt".to_string(),
         }
     }
