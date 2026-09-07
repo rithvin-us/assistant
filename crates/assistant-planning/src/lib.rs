@@ -126,7 +126,9 @@ mod tests {
             source: "test".to_string(),
         }];
 
-        let conflicts = detect_conflicts(&items, &[], &windows, &[], now);
+        let empty_commitments: &[Commitment] = &[];
+        let empty_blocks: &[PlanBlock] = &[];
+        let conflicts = detect_conflicts(&items, empty_commitments, &windows, empty_blocks, now);
         let feasibility = calculate_feasibility(&items, &windows, &conflicts);
 
         assert_eq!(feasibility.state, FeasibilityState::Infeasible);
@@ -160,7 +162,9 @@ mod tests {
             source: "test".to_string(),
         }];
 
-        let conflicts = detect_conflicts(&items, &[], &windows, &[], now);
+        let empty_commitments: &[Commitment] = &[];
+        let empty_blocks: &[PlanBlock] = &[];
+        let conflicts = detect_conflicts(&items, empty_commitments, &windows, empty_blocks, now);
         let feasibility = calculate_feasibility(&items, &windows, &conflicts);
 
         assert_eq!(feasibility.unknown_effort_count, 1);

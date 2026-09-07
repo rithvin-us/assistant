@@ -173,7 +173,8 @@ pub fn generate_upcoming_planning(
         .cloned()
         .collect();
 
-    let conflicts = detect_conflicts(items, commitments, &windows, &[], now);
+    let empty_blocks: &[PlanBlock] = &[];
+    let conflicts = detect_conflicts(items, commitments, &windows, empty_blocks, now);
     let feasibility = calculate_feasibility(items, &windows, &conflicts);
 
     let mut daily_workload_minutes = Vec::new();
@@ -198,10 +199,11 @@ pub fn generate_upcoming_planning(
 
         daily_workload_minutes.push((day_str, day_effort));
 
-        cursor = match cursor.next_day() {
-            Some(d) => d,
-            None => break,
-        };
+        if let Some(next) = cursor.next_day() {
+            cursor = next;
+        } else {
+            break;
+        }
     }
 
     UpcomingPlanning {
