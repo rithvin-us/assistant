@@ -1,8 +1,8 @@
 # M11 — Native Android interaction and motion
 
-Status: **partial**. Primitives are built, tested and verified on hardware;
-rollout across screens is incomplete. See "What is not done" before relying on
-this document as a description of the whole app.
+Status: **substantially complete**. Primitives are built, tested and verified on
+hardware, and rolled out across the mutation-bearing screens. Some read-mostly
+screens and the two hand-rolled drawer drags remain; see "What is not done".
 
 ## Principles
 
@@ -67,6 +67,50 @@ confirmation reflect the existing backend lifecycle, which M11 did not change.
 Task completion is the one deliberately optimistic path: it is frequent and
 reversible, and a checkbox that waits for a round trip feels broken. It rolls
 back to the previous status when the request fails.
+
+### Reminders — `RemindersScreen.tsx`
+
+| Element | Gesture | Action | Reversible | Confirm | Non-gesture alternative | Haptic | Backend | On failure |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Reminder row | swipe left | reveals tray | n/a | no | tray is always in the a11y tree | at threshold | none | snaps closed |
+| Tray → Done | tap | toggle `status: handled` | yes | no | labelled control on row | on completion | `PATCH /v1/reminders/{id}` | **rolls back**, error shown |
+| Tray → Delete | tap | delete reminder | no | tap is the confirmation | labelled icon on row | on completion | `DELETE /v1/reminders/{id}` | row stays, error shown |
+| List | pull down at top | refresh | n/a | no | existing poll | at threshold | `GET /v1/reminders` | spinner stops, error shown |
+
+### Ideas — `IdeasScreen.tsx`
+
+| Element | Gesture | Action | Reversible | Confirm | Non-gesture alternative | Haptic | Backend | On failure |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Idea row | swipe left | reveals tray | n/a | no | tray is always in the a11y tree | at threshold | none | snaps closed |
+| Tray → To Task | tap | convert to task | no | tap is the confirmation | labelled icon on row | no | `POST /v1/ideas/{id}/convert` | error shown |
+| Tray → Delete | tap | delete idea | no | tap is the confirmation | labelled icon on row | on completion | `DELETE /v1/ideas/{id}` | row stays, error shown |
+| List | pull down at top | refresh | n/a | no | existing poll | at threshold | `GET /v1/ideas` | spinner stops, error shown |
+
+### Memory and Academic
+
+Pull-to-refresh only. Memory keeps its existing non-destructive archive/restore
+lifecycle: no swipe actions, no delete. Academic is read-only.
+
+## Navigation and system gestures
+
+`App.tsx` swaps one screen at a time out of a state machine, which had two
+consequences M11 fixes.
+
+**Back.** The history stack stayed one entry deep, so Android's back button and
+back gesture left the app entirely — from a sub-screen that reads as a crash.
+`lib/useAndroidBack.ts` pushes a history entry per screen and routes the pop to
+a handler: back returns to home, and closes an open sheet before it touches
+navigation. Back from the home screen still exits, because that is what the user
+means there.
+
+The system gesture is **not** hijacked. Nothing calls `preventDefault`, no touch
+handler is bound in the edge region, and the default is never suppressed at the
+root. We give Android something to pop rather than intercepting the gesture.
+
+**Motion.** `components/ScreenTransition.tsx` animates the incoming screen in
+over 200 ms from the direction of travel. Entry only: animating the outgoing
+screen would mean keeping two screens mounted, each with its own polling and
+network traffic, to decorate a moment. Reduced motion drops it entirely.
 
 ## Primitives
 
@@ -180,16 +224,15 @@ and haptics (inert, see above).
 
 M11 is partial. Honestly scoped, the following remain:
 
-- Swipe actions and pull-to-refresh on Reminders, Ideas, Memory, Documents,
-  Classroom, Calendar, Gmail, Drive, Academic, Planning, Connections.
-- Optimistic writes still needing the same rollback treatment:
-  `RemindersScreen.tsx:123`, `IdeasScreen.tsx:132`.
-- Navigation transitions between screens (`App.tsx` swaps screens with no
-  motion).
+- Pull-to-refresh on Documents, Classroom, Calendar, Gmail, Drive, Planning and
+  Connections. These are read-mostly or account-gated and were left alone rather
+  than rushed.
 - Drag-to-reorder.
 - List insertion/removal animation.
-- Bottom-sheet drag-to-dismiss audit (`GmailScreen` and `DriveScreen` hand-roll
-  touch drags that predate `SwipeableRow` and should move onto shared logic).
+- `GmailScreen` and `DriveScreen` still hand-roll drawer drags with raw
+  `onTouchStart/Move/End` and a fixed 100 px threshold. They predate
+  `SwipeableRow`, do no axis locking and ignore cancellation, and should move
+  onto the shared gesture rules.
 - Virtualization. Every list renders its whole array; this is fine at current
   data volumes but is the first thing to fail on a long list.
 
