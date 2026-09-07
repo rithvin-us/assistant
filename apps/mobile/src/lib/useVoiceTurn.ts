@@ -218,9 +218,14 @@ export function useVoiceTurn(): VoiceTurn {
       try {
         const spokenReply = await speakVoiceText(reply, undefined, controller.signal);
         audioBase64 = spokenReply.audio_base64 ?? null;
-      } catch (ttsErr) {
-        if (!live()) return;
-        setError(describe(ttsErr));
+      } catch {
+        // Zero-cost Native Device Speech Synthesis fallback (100% Free voice talk-back)
+        if (typeof window !== "undefined" && "speechSynthesis" in window) {
+          window.speechSynthesis.cancel();
+          const utterance = new SpeechSynthesisUtterance(reply);
+          utterance.lang = "en-US";
+          window.speechSynthesis.speak(utterance);
+        }
       }
 
       if (!live()) return;
