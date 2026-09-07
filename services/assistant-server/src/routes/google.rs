@@ -207,7 +207,10 @@ pub async fn list_accounts(
     State(state): State<SharedState>,
     Extension(principal): Extension<Principal>,
 ) -> Result<Json<Vec<AccountSummary>>, AppError> {
-    let client = google_client(&state)?;
+    let client = match state.google.as_ref() {
+        Some(c) => c,
+        None => return Ok(Json(Vec::new())),
+    };
     let accounts = client
         .list_accounts(principal.user_id)
         .await
