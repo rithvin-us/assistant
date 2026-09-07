@@ -1,0 +1,30 @@
+[package]
+name = "assistant-documents"
+description = "Document/PDF intelligence domain: types, extraction and OCR/vision seams."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+assistant-memory.workspace = true
+
+async-trait.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time.workspace = true
+tokio = { workspace = true, features = ["sync"] }
+tracing.workspace = true
+uuid.workspace = true
+
+# Pure-Rust PDF text extraction, page-aware. Wraps `lopdf` internally, so the
+# same crate covers metadata (page count) and per-page text.
+pdf-extract = { version = "0.9", default-features = false }
+lopdf = { version = "0.36", default-features = false }
+# Deterministic content hashing for provenance and dedup checks.
+sha2 = { version = "0.10", default-features = false }
+hex = "0.4"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

@@ -334,6 +334,74 @@ impl DriveProvider for GoogleClient {
     }
 }
 
+// ---------------------------------------------------------------------------
+// M8: raw-bytes download for document ingestion
+// ---------------------------------------------------------------------------
+
+/// Downloads a Drive file's raw bytes for M8 ingestion.
+///
+/// This is deliberately *not* on the `DriveProvider` trait -- the trait's
+/// existing methods are what the assistant-tools registry sees, and those
+/// stay narrow. A separate helper called from the document routes keeps the
+/// M8 pipeline out of the tool surface (a model must not ingest files on the
+/// user's behalf without a human triggering it).
+///
+/// `max_bytes` is enforced twice: once against the reported size (before any
+/// download) and once against the delivered body (in case the provider lied
+/// about the size). Google exports (native docs) have no reported size and
+/// are refused here for the same reason `read_small_file` refuses unknown-
+/// size non-exportable files: an unbounded download is not safe.
+pub async fn download_document_bytes(
+    client: &GoogleClient,
+    account_id: Uuid,
+    user_id: Uuid,
+    file_id: &str,
+    max_bytes: u64,
+) -> Result<Vec<u8>, ToolError> {
+    let meta = client.metadata(account_id, user_id, file_id).await?;
+    if meta.is_folder {
+        return Err(ToolError::InvalidArguments(
+            "that is a folder, not a file".into(),
+        ));
+    }
+    let Some(size) = meta.size_bytes else {
+        return Err(ToolError::InvalidArguments(format!(
+            "\"{}\" does not report a size, so it is not safe to ingest here.",
+            meta.name
+        )));
+    };
+    if size > max_bytes {
+        return Err(ToolError::InvalidArguments(format!(
+            "\"{}\" is {} bytes; the ingest limit is {} bytes.",
+            meta.name, size, max_bytes
+        )));
+    }
+
+    let token = client.get_access_token(user_id, account_id).await?;
+    let url = format!("{API_BASE}/files/{}?alt=media", url_encode(file_id));
+    let resp = client
+        .http
+        .get(&url)
+        .bearer_auth(&token)
+        .send()
+        .await
+        .map_err(|_| ToolError::Failed("Could not reach Google Drive.".into()))?;
+    if !resp.status().is_success() {
+        return Err(api_error("Drive", resp.status()));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|_| ToolError::Failed("Drive returned an unreadable file.".into()))?;
+    if bytes.len() as u64 > max_bytes {
+        return Err(ToolError::InvalidArguments(format!(
+            "\"{}\" download exceeded the {}-byte ingest limit.",
+            meta.name, max_bytes
+        )));
+    }
+    Ok(bytes.to_vec())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1483,3 +1483,117 @@ psychological profiling, and any scheduler or queue. Postgres text search
 (`tsvector` + a GIN index + `websearch_to_tsquery`) is enough for the
 baseline; embeddings can arrive when a real use case demands them, without
 touching this ADR's boundaries.
+
+## ADR-0036 — Document / PDF intelligence: deterministic first, providers behind traits
+
+**Decision.** Documents are a first-class domain in their own crate
+(`assistant-documents`). Ingestion produces a metadata row, bytes go to a
+pluggable object store, extraction is deterministic (via `pdf-extract`), OCR
+and visual/multimodal verification are provider-neutral traits invoked only
+when the deterministic pass leaves a page unreadable, and every page carries
+its own extraction method so provenance survives to the API and the UI.
+
+**Context.** The M6 Drive integration deliberately refused to read PDFs
+because doing so requires OCR and page-level handling. M8 supplies that
+handling, but the same failure modes the memory milestone had to avoid still
+apply: a language model given a "read this file and remember what it says"
+tool would invent content, silently drop pages, and treat every extraction as
+ground truth. On the other end, running a multimodal model over every page of
+every PDF is a real bill of money and latency, and it makes retrieval slow
+enough that the fast deterministic paths that already exist stop feeling fast.
+
+The right shape is the same shape memory took: a small typed domain layer,
+storage behind a trait, providers behind narrower traits, and no path that
+lets a model turn document content into stored data without the application
+deciding.
+
+**Options.**
+1. Extract with a multimodal model on every page, index vectors, retrieve
+   with embeddings.
+2. Extract text on the client with `pdf.js`, send the flattened text to the
+   server, store as one blob.
+3. Deterministic server-side extraction with `pdf-extract`, per-page rows in
+   Postgres, OCR/vision traits called only for pages that need them, page-
+   level full-text search with `tsvector`.
+
+**Chosen approach: option 3.**
+
+**Reason.** Option 1 is what a milestone brief specifically forbids: expensive
+model calls for basic metadata and text extraction, vector infrastructure the
+project has no other use for, and a pipeline where every page depends on a
+provider being up. Option 2 solves the wrong problem: PDF parsing works fine
+in Rust, the mobile bundle is not the right place to hold a PDF parser, and
+"send the flattened text" throws away the page boundaries retrieval needs.
+
+Option 3 keeps the same rules the rest of the project runs on:
+
+* **Determinism first.** `pdf-extract` returns per-page text and a page count
+  from raw bytes with no network call. A page whose native text is under 40
+  printable characters is flagged as `needs_ocr` -- a small, testable
+  heuristic, not a "should we try OCR" model prompt.
+
+* **Storage behind a trait.** `DocumentStorage` has a `LocalFilesystemStorage`
+  backend today, mapping `user_id/document_id` to files under a configurable
+  root. A Supabase Storage or S3 backend is a straightforward implementation
+  against the same trait; the pipeline does not know which backend is
+  configured. Bytes never live in an ordinary Postgres row.
+
+* **OCR and vision behind traits.** `OcrProvider` and `DocumentVisionProvider`
+  are narrow: give them a rendered page, they return text and a confidence.
+  The default `NullOcrProvider` returns `NotAvailable`; the pipeline records
+  the page as "OCR needed" rather than pretending to have read it. A
+  Tesseract or cloud-OCR backend plugs in without touching the domain crate.
+  Same for a model-vendor's vision API.
+
+* **Provenance is mandatory.** Every `DocumentPage` records how it was
+  extracted (`native_text | ocr | visual_verification | none`) and, for
+  non-native methods, a confidence. Every `DocumentProvenance` names the
+  document, filename, source, page and method. The `DocumentMemoryProposal`
+  and `DeadlineCandidate` types both carry a `DocumentProvenance`, so a
+  memory or a task derived from a document is traceable back to `filename
+  page 7, OCR`.
+
+* **Bounded retrieval, page-level search.** Pages are stored per row with a
+  `tsvector` maintained by trigger. Search returns page-level hits with
+  snippets; there is a hard `MAX_CONTEXT_PAGES` (4) and `MAX_CONTEXT_CHARS`
+  (8000) budget for anything the assistant injects into a turn's context. No
+  code path can dump a whole 200-page PDF at the model.
+
+* **The processing state machine is linear and honest.** `Uploaded →
+  Extracting → [Ocr] → [Verifying] → Indexed`, with `Failed` as a terminal
+  side branch that always sets `processing_error`. Reprocess restarts from
+  the current bytes.
+
+* **Explicit-only ingest.** `POST /v1/documents` accepts bytes with a
+  `Content-Type` and `X-Filename` header. `POST /v1/documents/from-drive`
+  takes an account/file pair, uses the existing M6 Drive client to fetch
+  bytes (behind size and MIME checks), and runs the same pipeline. There is
+  no autonomous "sweep the user's Drive for PDFs" path -- ADR-0032 and
+  ADR-0033 already said Drive is user-triggered, and M8 keeps that.
+
+**Consequences.** Same-user, same-bytes re-uploads dedup on `(user_id,
+content_hash)`; the `on conflict` clause refreshes `storage_key` so a
+re-upload after a storage GC still resolves. Deletion of a document cascades
+to its pages via `on delete cascade`, and the storage object is deleted
+best-effort. The `MAX_DOCUMENT_BYTES` limit (25 MiB) is enforced twice for
+Drive ingest -- once against the reported metadata size (before any
+download), once against the actual body -- so a provider that lies about
+size cannot spend memory.
+
+Explicitly not built as part of M8: a background job queue, vector
+embeddings, semantic search, per-document access sharing, PDF form
+extraction, and automatic memory/task creation. Deadline candidates and
+memory proposals are produced deterministically; the application (or a later
+milestone with an explicit "review candidates" UI) is what decides whether
+they become durable rows. Real OCR and real multimodal verification plug in
+behind the existing traits when a provider is configured; the M8 deployment
+default is honest "no OCR available, page recorded as unreadable" rather
+than fabricated content.
+
+Storage backend note. The `LocalFilesystemStorage` backend is sufficient for
+a single-node deployment (including the current Render container) and for
+local development. A `SupabaseStorage` HTTP-backed implementation of the
+same trait is the intended production backend and is not implemented in
+M8; the migration path is a new impl of `DocumentStorage` plus a
+`document_storage_backend` config value. No schema change is needed for that
+migration because the storage_key is opaque to Postgres.

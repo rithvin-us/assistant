@@ -8,7 +8,7 @@
  */
 
 /** Must equal `assistant_protocol::PROTOCOL_VERSION`. */
-export const PROTOCOL_VERSION = 6;
+export const PROTOCOL_VERSION = 7;
 
 export type HealthStatus = "ok" | "degraded";
 
@@ -464,4 +464,60 @@ export interface UpdateMemoryRequest {
   confidence?: number;
   /** Set `null` to clear an expiry; omit to leave alone. */
   expires_at?: string | null;
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 8 -- document / PDF intelligence
+// ---------------------------------------------------------------------------
+
+export type DocumentSource = "local_upload" | "google_drive" | "external_source";
+
+export type DocumentProcessingState =
+  | "uploaded"
+  | "extracting"
+  | "ocr"
+  | "verifying"
+  | "indexed"
+  | "failed";
+
+export type ExtractionMethodDto =
+  | "native_text"
+  | "ocr"
+  | "visual_verification"
+  | "none";
+
+export interface DocumentItem {
+  id: string;
+  user_id: string;
+  filename: string;
+  mime_type: string;
+  size_bytes: number;
+  source: DocumentSource;
+  source_ref?: string | null;
+  content_hash: string;
+  page_count?: number | null;
+  processing_state: DocumentProcessingState;
+  processing_error?: string | null;
+  created_at: string;
+  updated_at: string;
+  processed_at?: string | null;
+}
+
+export interface DocumentPageItem {
+  document_id: string;
+  user_id: string;
+  page_number: number;
+  extraction_method: ExtractionMethodDto;
+  content: string;
+  confidence?: number | null;
+  char_count: number;
+}
+
+export interface DocumentSearchHit {
+  document_id: string;
+  filename: string;
+  page_number: number;
+  extraction_method: ExtractionMethodDto;
+  snippet: string;
+  score: number;
 }

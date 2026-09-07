@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// Bumped whenever a breaking change is made to the types in this crate. The
 /// client sends the version it was built against so the server can reject a
 /// mismatched build instead of misparsing it.
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 pub type ConversationId = Uuid;
 pub type MessageId = Uuid;
@@ -746,4 +746,104 @@ pub struct MemoryProposalDto {
     pub source_ref: Option<String>,
     #[serde(default, with = "time::serde::rfc3339::option")]
     pub expires_at: Option<OffsetDateTime>,
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 8 -- document / PDF intelligence
+// ---------------------------------------------------------------------------
+//
+// Mirrors `assistant_documents`. The mobile Documents screen speaks this
+// vocabulary; nothing on the wire lets a client claim ownership of another
+// user's document.
+
+/// Where a document was ingested from. Same set as
+/// `assistant_documents::DocumentSource`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentSourceDto {
+    LocalUpload,
+    GoogleDrive,
+    ExternalSource,
+}
+
+/// The document's processing state. Same set as
+/// `assistant_documents::ProcessingState`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentProcessingStateDto {
+    Uploaded,
+    Extracting,
+    Ocr,
+    Verifying,
+    Indexed,
+    Failed,
+}
+
+/// How this page's text came to be. Same set as
+/// `assistant_documents::ExtractionMethod`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractionMethodDto {
+    NativeText,
+    Ocr,
+    VisualVerification,
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentItem {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub filename: String,
+    pub mime_type: String,
+    pub size_bytes: u64,
+    pub source: DocumentSourceDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<String>,
+    pub content_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page_count: Option<u32>,
+    pub processing_state: DocumentProcessingStateDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub processing_error: Option<String>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub processed_at: Option<OffsetDateTime>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentPageItem {
+    pub document_id: Uuid,
+    pub user_id: Uuid,
+    pub page_number: u32,
+    pub extraction_method: ExtractionMethodDto,
+    pub content: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    pub char_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentSearchHit {
+    pub document_id: Uuid,
+    pub filename: String,
+    pub page_number: u32,
+    pub extraction_method: ExtractionMethodDto,
+    pub snippet: String,
+    pub score: f32,
+}
+
+/// Payload to ingest a Google Drive file by id.
+///
+/// The server downloads the bytes (using the M6 Drive client), stores them in
+/// the object store, and runs the processing pipeline. The client never sends
+/// the bytes themselves; that keeps the mobile bundle out of the object-store
+/// authentication path.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IngestFromDriveRequest {
+    pub account_id: Uuid,
+    pub file_id: String,
 }

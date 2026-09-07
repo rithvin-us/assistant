@@ -59,6 +59,11 @@ pub struct Config {
     pub google_redirect_uri: Option<String>,
     /// 32-byte AES-GCM encryption key for credentials at rest.
     pub credential_encryption_key: Option<String>,
+    /// Directory the local document storage backend writes into (M8).
+    /// Defaults to `./data/documents` under the working directory. A Supabase
+    /// Storage or S3 backend can be added later behind the same trait; see
+    /// ADR-0036.
+    pub document_storage_dir: PathBuf,
 }
 
 impl Config {
@@ -142,6 +147,10 @@ impl Config {
             google_client_secret,
             google_redirect_uri,
             credential_encryption_key,
+            document_storage_dir: PathBuf::from(env_or(
+                "ASSISTANT_DOCUMENT_STORAGE_DIR",
+                "./data/documents",
+            )),
         })
     }
 
@@ -255,6 +264,7 @@ impl fmt::Debug for Config {
                     .as_ref()
                     .map(|_| "<redacted>"),
             )
+            .field("document_storage_dir", &self.document_storage_dir)
             .finish()
     }
 }

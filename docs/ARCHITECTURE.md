@@ -24,6 +24,7 @@ obvious place for it to go — and that nothing has been faked in the meantime.
 │ crates/assistant-tools     ToolSpec, RiskLevel, permissions   │
 │ crates/assistant-auth      Principal, TokenVerifier           │
 │ crates/assistant-memory    memory domain + MemoryStore        │
+│ crates/assistant-documents document domain + PDF pipeline     │
 │ crates/assistant-protocol  wire types (leaf, no deps on above)│
 ├───────────────────────────────────────────────────────────────┤
 │ PostgreSQL (Supabase)      source of truth                    │
@@ -60,6 +61,7 @@ enables the feature; the core cannot. See ADR-0018.
 | `assistant-tools` | The risk/permission vocabulary must be usable by policy code that has no business depending on orchestration. |
 | `assistant-auth` | Auth is consumed by the server middleware and, later, by the desktop agent's connection handshake. |
 | `assistant-memory` | Memory has its own lifecycle and retention rules; keeping it separate stops conversation logging from quietly becoming memory. |
+| `assistant-documents` | Documents have their own lifecycle (upload → extract → OCR → verify → index), object storage, and per-page provenance; the crate exposes traits for `DocumentStore`, `DocumentStorage`, `OcrProvider` and `DocumentVisionProvider` so the pipeline stays deterministic-first and swappable. See ADR-0036. |
 
 Durable storage follows the same rule as model providers: `assistant-core`
 declares the trait and the safety it needs; the `sqlx` implementation lives in

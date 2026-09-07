@@ -5,6 +5,7 @@
 
 pub mod academic;
 pub mod conversation;
+pub mod documents;
 pub mod google;
 pub mod health;
 pub mod memory;
@@ -134,6 +135,26 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/v1/memories/{id}/archive", post(memory::archive_memory))
         .route("/v1/memories/{id}/restore", post(memory::restore_memory))
+        // Documents (M8)
+        .route(
+            "/v1/documents",
+            get(documents::list_documents).post(documents::upload_document),
+        )
+        .route(
+            "/v1/documents/{id}",
+            get(documents::get_document).delete(documents::delete_document),
+        )
+        .route("/v1/documents/{id}/pages", get(documents::list_pages))
+        .route("/v1/documents/{id}/pages/{n}", get(documents::get_page))
+        .route(
+            "/v1/documents/{id}/reprocess",
+            post(documents::reprocess_document),
+        )
+        .route("/v1/documents/search", get(documents::search_pages))
+        .route(
+            "/v1/documents/from-drive",
+            post(documents::ingest_from_drive),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,

@@ -440,6 +440,7 @@ fn test_config() -> Config {
         google_client_secret: None,
         google_redirect_uri: None,
         credential_encryption_key: None,
+        document_storage_dir: std::path::PathBuf::from("./data/documents"),
     }
 }
 
