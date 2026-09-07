@@ -64,7 +64,106 @@ pub async fn transcribe(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("audio/webm");
 
-    // Determine appropriate file extension
+    let is_gemini = state.gemini_api_key.is_some()
+        || state
+            .openai_base_url
+            .as_deref()
+            .map(|u| u.contains("generativelanguage.googleapis.com"))
+            .unwrap_or(false);
+
+    if is_gemini {
+        use base64::Engine;
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&body);
+        let mime = if content_type.is_empty() { "audio/webm" } else { content_type };
+        let data_url = format!("data:{mime};base64,{b64}");
+
+        let gemini_model = if state.openai_transcription_model.starts_with("gemini") {
+            &state.openai_transcription_model
+        } else {
+            "gemini-1.5-flash"
+        };
+
+        let payload = serde_json::json!({
+            "model": gemini_model,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "text",
+                            "text": "Transcribe this audio recording verbatim. Output ONLY the raw spoken text without quotes, formatting, or commentary."
+                        },
+                        {
+                            "type": "image_url",
+                            "image_url": {
+                                "url": data_url
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        let base_url = state
+            .openai_base_url
+            .as_deref()
+            .unwrap_or("https://generativelanguage.googleapis.com/v1beta/openai");
+        let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
+
+        let response = state
+            .http
+            .post(&url)
+            .bearer_auth(api_key)
+            .json(&payload)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "failed to contact Gemini transcription API");
+                (
+                    StatusCode::BAD_GATEWAY,
+                    Json(ApiError {
+                        code: "transcription_transport_error".into(),
+                        message: "Failed to reach Gemini transcription API.".into(),
+                    }),
+                )
+            })?;
+
+        let status = response.status();
+        let resp_json: serde_json::Value = response.json().await.map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(ApiError {
+                    code: "transcription_read_error".into(),
+                    message: format!("Failed to parse Gemini transcription response: {e}"),
+                }),
+            )
+        })?;
+
+        if !status.is_success() {
+            let msg = resp_json["error"]["message"]
+                .as_str()
+                .unwrap_or("Gemini transcription failed");
+            return Err((
+                StatusCode::BAD_GATEWAY,
+                Json(ApiError {
+                    code: "transcription_error".into(),
+                    message: msg.to_string(),
+                }),
+            ));
+        }
+
+        let transcribed_text = resp_json["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("")
+            .trim()
+            .to_string();
+
+        return Ok(Json(TranscribeResponse {
+            text: transcribed_text,
+        }));
+    }
+
+    // Standard OpenAI Whisper multipart upload path
     let file_name = if content_type.contains("wav") {
         "audio.wav"
     } else if content_type.contains("m4a") || content_type.contains("mp4") {
@@ -99,13 +198,10 @@ pub async fn transcribe(
         form = form.text("language", lang.clone());
     }
 
-    let base_url = state.openai_base_url.as_deref().unwrap_or_else(|| {
-        if state.gemini_api_key.is_some() {
-            "https://generativelanguage.googleapis.com/v1beta/openai"
-        } else {
-            "https://api.openai.com"
-        }
-    });
+    let base_url = state
+        .openai_base_url
+        .as_deref()
+        .unwrap_or("https://api.openai.com");
     let transcription_url = format!("{}/v1/audio/transcriptions", base_url.trim_end_matches('/'));
 
     let response = state
