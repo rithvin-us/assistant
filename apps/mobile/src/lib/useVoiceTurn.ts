@@ -181,9 +181,28 @@ export function useVoiceTurn(): VoiceTurn {
 
       setTranscript(spoken);
       setState("thinking");
-      const reply = await executeTurn(spoken, conversationId.current);
+      const outcome = await executeTurn(spoken, conversationId.current);
       if (!live()) return;
 
+      // The turn stopped on an approval. Nothing ran, and voice is the wrong
+      // place to grant one -- "yes" is far too easy to say by accident for a
+      // consequential action. Say what is waiting and send the user to the
+      // existing approval UI rather than inventing a spoken consent path.
+      if (outcome.pendingApprovals.length > 0) {
+        const pending = outcome.pendingApprovals[0];
+        setState("idle");
+        setTranscript(null);
+        setError({
+          code: "voice_approval_required",
+          message:
+            outcome.pendingApprovals.length === 1
+              ? `"${pending.summary}" needs your approval. Open the assistant to confirm it.`
+              : `${outcome.pendingApprovals.length} actions need your approval. Open the assistant to confirm them.`,
+        });
+        return;
+      }
+
+      const reply = outcome.text;
       if (!reply || reply.trim().length === 0) {
         setState("idle");
         setTranscript(null);

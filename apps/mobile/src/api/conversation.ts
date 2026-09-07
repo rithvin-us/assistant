@@ -82,6 +82,23 @@ export async function subscribe(handlers: {
   };
 }
 
+/** An action the turn stopped on, waiting for the user to approve it. */
+export interface PendingApprovalNotice {
+  name: string;
+  summary: string;
+  reason: string;
+}
+
+/** The outcome of a turn: what was said, and anything it stopped short of doing. */
+export interface TurnOutcome {
+  text: string;
+  /**
+   * Tools the turn proposed but did not run. Non-empty means the assistant
+   * stopped and is waiting for approval -- nothing was executed.
+   */
+  pendingApprovals: PendingApprovalNotice[];
+}
+
 /** A turn that could not be completed. Carries the server's code where there is one. */
 export class TurnFailedError extends Error {
   constructor(
@@ -106,9 +123,16 @@ export class TurnFailedError extends Error {
  * they were the assistant's reply; the voice path then spoke them aloud, so a
  * connection failure was indistinguishable from an answer.
  */
-export async function executeTurn(userText: string, conversationId?: string): Promise<string> {
+export async function executeTurn(
+  userText: string,
+  conversationId?: string,
+): Promise<TurnOutcome> {
   const id = conversationId || crypto.randomUUID();
   let fullAnswer = "";
+  // Approval-required frames were ignored entirely, so a voice request that
+  // needed approval produced no audible acknowledgement and nothing ran -- the
+  // user had no way to know the assistant had stopped and was waiting.
+  const pendingApprovals: PendingApprovalNotice[] = [];
 
   try {
     await openConversation(id);
@@ -119,7 +143,7 @@ export async function executeTurn(userText: string, conversationId?: string): Pr
     );
   }
 
-  return new Promise<string>((resolve, reject) => {
+  return new Promise<TurnOutcome>((resolve, reject) => {
     let unlisten: UnlistenFn | null = null;
 
     const cleanup = () => {
@@ -131,11 +155,17 @@ export async function executeTurn(userText: string, conversationId?: string): Pr
       onFrame: (frame) => {
         if (frame.type === "assistant_delta") {
           fullAnswer += frame.text;
+        } else if (frame.type === "approval_required") {
+          pendingApprovals.push({
+            name: frame.name,
+            summary: frame.summary,
+            reason: frame.reason,
+          });
         } else if (frame.type === "turn_end") {
           cleanup();
           // An empty answer is returned as empty. The caller decides what that
           // means; inventing "Done." put words in the assistant's mouth.
-          resolve(fullAnswer);
+          resolve({ text: fullAnswer, pendingApprovals });
         } else if (frame.type === "error") {
           cleanup();
           reject(new TurnFailedError(friendlyError(frame.code, frame.message), frame.code));
@@ -147,7 +177,7 @@ export async function executeTurn(userText: string, conversationId?: string): Pr
           // A socket that closes mid-turn has not answered. If some text had
           // already streamed it is real and worth keeping; nothing else is.
           if (fullAnswer) {
-            resolve(fullAnswer);
+            resolve({ text: fullAnswer, pendingApprovals });
           } else {
             reject(
               new TurnFailedError(
