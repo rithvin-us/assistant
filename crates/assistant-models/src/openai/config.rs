@@ -38,10 +38,14 @@ impl OpenAIConfig {
     }
 
     pub fn chat_completions_url(&self) -> String {
-        format!(
-            "{}/v1/chat/completions",
-            self.base_url.trim_end_matches('/')
-        )
+        let base = self.base_url.trim_end_matches('/');
+        if base.ends_with("/chat/completions") {
+            base.to_string()
+        } else if base.ends_with("/v1") || base.ends_with("/openai") {
+            format!("{base}/chat/completions")
+        } else {
+            format!("{base}/v1/chat/completions")
+        }
     }
 }
 
@@ -59,3 +63,38 @@ impl fmt::Debug for OpenAIConfig {
             .finish()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chat_completions_url_default() {
+        let cfg = OpenAIConfig::new("test-key");
+        assert_eq!(
+            cfg.chat_completions_url(),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_chat_completions_url_gemini_openai() {
+        let mut cfg = OpenAIConfig::new("test-key");
+        cfg.base_url = "https://generativelanguage.googleapis.com/v1beta/openai".to_string();
+        assert_eq!(
+            cfg.chat_completions_url(),
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_chat_completions_url_with_v1() {
+        let mut cfg = OpenAIConfig::new("test-key");
+        cfg.base_url = "https://api.openai.com/v1".to_string();
+        assert_eq!(
+            cfg.chat_completions_url(),
+            "https://api.openai.com/v1/chat/completions"
+        );
+    }
+}
+
