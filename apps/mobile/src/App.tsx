@@ -23,6 +23,7 @@ import DriveScreen from "./screens/DriveScreen";
 import AcademicScreen from "./screens/AcademicScreen";
 import MemoryScreen from "./screens/MemoryScreen";
 import DocumentsScreen from "./screens/DocumentsScreen";
+import { PlanningScreen } from "./screens/PlanningScreen";
 import ConversationSheet from "./components/ConversationSheet";
 
 export type ScreenType =
@@ -38,7 +39,8 @@ export type ScreenType =
   | "drive"
   | "academic"
   | "memory"
-  | "documents";
+  | "documents"
+  | "planning";
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
@@ -102,6 +104,7 @@ export default function App() {
       {currentScreen === "documents" && (
         <DocumentsScreen onBack={() => setCurrentScreen("home")} />
       )}
+      {currentScreen === "planning" && <PlanningScreen />}
 
       {currentScreen === "home" && (
         <Fab

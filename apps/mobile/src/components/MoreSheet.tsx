@@ -40,6 +40,13 @@ export default function MoreSheet({
 }) {
   const FEATURES = [
     {
+      icon: <ChecklistRoundedIcon sx={{ color: "#10B981" }} />,
+      label: "Planning",
+      note: "Unified schedule, commitments, deadlines & feasibility",
+      enabled: true,
+      screen: "planning" as ScreenType,
+    },
+    {
       icon: <InsightsRoundedIcon sx={{ color: "#7C3AED" }} />,
       label: "Memory",
       note: "Preferences, facts & commitments the assistant remembers",

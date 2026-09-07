@@ -8,7 +8,16 @@
  */
 
 /** Must equal `assistant_protocol::PROTOCOL_VERSION`. */
-export const PROTOCOL_VERSION = 7;
+export const PROTOCOL_VERSION = 9;
+
+export type VoiceState =
+  | "idle"
+  | "listening"
+  | "transcribing"
+  | "thinking"
+  | "speaking"
+  | "interrupted"
+  | "error";
 
 export type HealthStatus = "ok" | "degraded";
 
@@ -32,16 +41,12 @@ export type ClientFrame =
   | { type: "user_text"; text: string }
   /** Ask for the approvals this user still has to answer. */
   | { type: "list_pending_approvals" }
-  /**
-   * Answer a pending approval.
-   *
-   * The id is the only thing the client gets to say. It cannot name a tool,
-   * supply arguments, assert a risk, or claim to be another user: the server
-   * loads the persisted action by id, scoped to the authenticated principal,
-   * and that record is authoritative.
-   */
   | { type: "approve_action"; approval_id: string }
-  | { type: "reject_action"; approval_id: string };
+  | { type: "reject_action"; approval_id: string }
+  | { type: "voice_start" }
+  | { type: "voice_audio_chunk"; data_base64: string; encoding: string }
+  | { type: "voice_cancel" }
+  | { type: "voice_interrupted" };
 
 /** One row in the approval sheet. Carries no argument values. */
 export interface PendingApproval {
@@ -67,13 +72,7 @@ export type ApprovalOutcome =
   | { state: "no_longer_permitted"; execution_id: string; reason: string }
   | { state: "not_found" };
 
-/**
- * Risk classification of a tool, for display only.
- *
- * The server decides what may run, against its own tool registry. A client must
- * never treat this as authority to execute anything -- it exists so an approval
- * prompt can be shown proportionately.
- */
+/** Risk classification of a tool, for display only. */
 export type RiskLevel = "green" | "yellow" | "orange" | "red";
 
 /** Frames the server sends back. */
@@ -90,13 +89,7 @@ export type ServerFrame =
       name: string;
       risk: RiskLevel;
       reason: string;
-      /**
-       * The durable approval to answer. `null` means the server has no database
-       * configured, so the action was not persisted and cannot be approved --
-       * show it as a notice, not an Approve button.
-       */
       approval_id: string | null;
-      /** The tool and the names of its arguments, never their values. */
       summary: string;
     }
   | { type: "pending_approvals"; approvals: PendingApproval[] }
@@ -108,6 +101,11 @@ export type ServerFrame =
   /** A tool finished. `ok` is false for a handled failure, which does not end the turn. */
   | { type: "tool_completed"; call_id: string; name: string; ok: boolean }
   | { type: "turn_end"; message_id: string }
+  | { type: "voice_state_changed"; state: VoiceState }
+  | { type: "voice_transcript_partial"; text: string }
+  | { type: "voice_transcript_final"; text: string }
+  | { type: "voice_tts_chunk"; audio_base64: string; is_final: boolean }
+  | { type: "voice_end" }
   | { type: "error"; code: string; message: string };
 
 /** A user-owned project. Mirrors `assistant_protocol::ProjectItem`. */
@@ -520,4 +518,129 @@ export interface DocumentSearchHit {
   extraction_method: ExtractionMethodDto;
   snippet: string;
   score: number;
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 9 -- unified personal planning
+// ---------------------------------------------------------------------------
+
+export type ItemSource =
+  | "standalone_task"
+  | "google_classroom"
+  | "google_calendar"
+  | "gmail"
+  | "document_deadline"
+  | "memory_context"
+  | "project_task";
+
+export type DeadlineKind = "hard" | "soft";
+export type DeadlinePrecision = "exact_date_time" | "date_only" | "partial_date";
+
+export interface Deadline {
+  due_at: string;
+  kind: DeadlineKind;
+  precision: DeadlinePrecision;
+  provenance: string;
+  confidence?: number | null;
+}
+
+export type EffortEstimate =
+  | { type: "known"; minutes: number }
+  | { type: "unknown" };
+
+export type PlanningPriority = "low" | "medium" | "high" | "urgent";
+
+export interface PlanningItem {
+  id: string;
+  user_id: string;
+  title: string;
+  description?: string | null;
+  source: ItemSource;
+  source_ref?: string | null;
+  priority: PlanningPriority;
+  deadline?: Deadline | null;
+  effort: EffortEstimate;
+  project_id?: string | null;
+  project_name?: string | null;
+  is_completed: boolean;
+  dependencies: string[];
+}
+
+export interface Commitment {
+  id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  is_all_day: boolean;
+  location?: string | null;
+  source: ItemSource;
+}
+
+export interface AvailabilityWindow {
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  is_usable: boolean;
+  source: string;
+}
+
+export interface PlanBlock {
+  item_id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  rationale: string;
+  confidence: number;
+  source: ItemSource;
+}
+
+export type ConflictType =
+  | "overlapping_commitments"
+  | "insufficient_time_before_deadline"
+  | "hard_deadlines_competing"
+  | "dependency_blocked"
+  | "scheduled_past_deadline";
+
+export type ConflictSeverity = "warning" | "critical";
+
+export interface Conflict {
+  conflict_type: ConflictType;
+  severity: ConflictSeverity;
+  affected_item_ids: string[];
+  reason: string;
+}
+
+export type FeasibilityState =
+  | "feasible"
+  | "likely_feasible"
+  | "uncertain"
+  | "infeasible";
+
+export interface FeasibilityResult {
+  state: FeasibilityState;
+  total_known_effort_minutes: number;
+  total_available_minutes: number;
+  unknown_effort_count: number;
+  conflicts: Conflict[];
+  explanation: string;
+}
+
+export interface TodayPlan {
+  date: string;
+  commitments: Commitment[];
+  recommended_blocks: PlanBlock[];
+  upcoming_deadlines: Deadline[];
+  total_available_minutes: number;
+  conflicts: Conflict[];
+  feasibility: FeasibilityResult;
+}
+
+export interface UpcomingPlanning {
+  horizon_days: number;
+  total_items: number;
+  deadlines: PlanningItem[];
+  daily_workload_minutes: [string, number][];
+  conflicts: Conflict[];
+  feasibility: FeasibilityResult;
 }
