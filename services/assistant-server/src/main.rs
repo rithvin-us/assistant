@@ -70,6 +70,15 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("no conversation store; the assistant will not remember anything");
     }
 
+    let memory = pool.clone().map(|pool| {
+        Arc::new(assistant_server::memory_store::PostgresMemoryStore::new(
+            pool,
+        )) as Arc<dyn assistant_memory::MemoryStore>
+    });
+    if memory.is_none() {
+        tracing::warn!("no memory store; long-term memory is unavailable this run");
+    }
+
     // The provider is constructed only when a credential is configured. A
     // deployment without one still answers on the deterministic path, and a
     // turn that needs a model fails with a clear `no_model_provider` rather
@@ -160,6 +169,7 @@ async fn main() -> anyhow::Result<()> {
             tools: Arc::new(tool_registry),
             store,
             conversations,
+            memory,
             ..Default::default()
         },
     );

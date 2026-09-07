@@ -11,6 +11,7 @@ pub mod crypto;
 pub mod db;
 pub mod error;
 pub mod google;
+pub mod memory_store;
 pub mod orchestration;
 pub mod prompt;
 pub mod routes;
@@ -72,12 +73,19 @@ pub fn app(
         ))
     });
 
+    let memory: Option<Arc<dyn assistant_memory::MemoryStore>> = db.as_ref().map(|pool| {
+        let store: Arc<dyn assistant_memory::MemoryStore> =
+            Arc::new(crate::memory_store::PostgresMemoryStore::new(pool.clone()));
+        store
+    });
+
     let state = Arc::new(AppState {
         verifier,
         events,
         orchestrator: Arc::new(orchestrator),
         approvals,
         db,
+        memory,
         http,
         openai_api_key: config.openai_api_key.clone(),
         openai_transcription_model: config.openai_transcription_model.clone(),

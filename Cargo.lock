@@ -109,6 +109,7 @@ version = "0.1.0"
 dependencies = [
  "assistant-auth",
  "assistant-core",
+ "assistant-memory",
  "assistant-models",
  "assistant-tools",
  "async-trait",
@@ -131,6 +132,7 @@ dependencies = [
  "serde",
  "thiserror 2.0.20",
  "time",
+ "tokio",
  "uuid",
 ]
 
@@ -190,6 +192,7 @@ dependencies = [
  "anyhow",
  "assistant-auth",
  "assistant-core",
+ "assistant-memory",
  "assistant-models",
  "assistant-protocol",
  "assistant-tools",

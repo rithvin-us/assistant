@@ -21,6 +21,7 @@ import GoogleIcon from "@mui/icons-material/Google";
 import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
 import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
 import AutoStoriesOutlinedIcon from "@mui/icons-material/AutoStoriesOutlined";
+import InsightsRoundedIcon from "@mui/icons-material/InsightsRounded";
 
 import type { ConnectionState } from "../api/bridge";
 import type { ScreenType } from "../App";
@@ -37,6 +38,13 @@ export default function MoreSheet({
   onSelectScreen: (screen: ScreenType) => void;
 }) {
   const FEATURES = [
+    {
+      icon: <InsightsRoundedIcon sx={{ color: "#7C3AED" }} />,
+      label: "Memory",
+      note: "Preferences, facts & commitments the assistant remembers",
+      enabled: true,
+      screen: "memory" as ScreenType,
+    },
     {
       icon: <AutoStoriesOutlinedIcon sx={{ color: "#7C3AED" }} />,
       label: "Academic",

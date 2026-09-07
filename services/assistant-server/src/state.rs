@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use assistant_auth::TokenVerifier;
 use assistant_core::{EventBus, Orchestrator, actions::ApprovalCoordinator};
+use assistant_memory::MemoryStore;
 use sqlx::PgPool;
 
 use crate::google::GoogleClient;
@@ -23,6 +24,8 @@ pub struct AppState {
     pub approvals: Option<Arc<ApprovalCoordinator>>,
     /// `None` when no `DATABASE_URL` was configured.
     pub db: Option<PgPool>,
+    /// Long-term memory store. `None` when there is no database.
+    pub memory: Option<Arc<dyn MemoryStore>>,
     pub http: reqwest::Client,
     pub openai_api_key: Option<String>,
     pub openai_transcription_model: String,
