@@ -1,19 +1,10 @@
 //! Deterministic Voice Session State Machine.
 
-use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum VoiceState {
-    Idle,
-    Listening,
-    Transcribing,
-    Thinking,
-    Speaking,
-    Interrupted,
-    Error,
-}
+// The wire definition is the single definition. This machine validates the very
+// states the client is told about, rather than a parallel copy of them.
+pub use assistant_protocol::VoiceState;
 
 #[derive(Debug, Error)]
 pub enum StateMachineError {

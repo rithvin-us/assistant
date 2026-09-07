@@ -8,7 +8,16 @@
  */
 
 /** Must equal `assistant_protocol::PROTOCOL_VERSION`. */
-export const PROTOCOL_VERSION = 9;
+export const PROTOCOL_VERSION = 10;
+
+/**
+ * Identifies one voice turn: a single press-speak-answer cycle.
+ *
+ * Minted by the client when it starts listening and echoed on every voice frame
+ * the server sends back, so a late transcript or audio chunk from an abandoned
+ * turn can be recognised and dropped instead of playing over a new question.
+ */
+export type VoiceTurnId = string;
 
 export type VoiceState =
   | "idle"
@@ -43,10 +52,15 @@ export type ClientFrame =
   | { type: "list_pending_approvals" }
   | { type: "approve_action"; approval_id: string }
   | { type: "reject_action"; approval_id: string }
-  | { type: "voice_start" }
-  | { type: "voice_audio_chunk"; data_base64: string; encoding: string }
-  | { type: "voice_cancel" }
-  | { type: "voice_interrupted" };
+  | { type: "voice_start"; turn_id: VoiceTurnId }
+  | {
+      type: "voice_audio_chunk";
+      turn_id: VoiceTurnId;
+      data_base64: string;
+      encoding: string;
+    }
+  | { type: "voice_cancel"; turn_id: VoiceTurnId }
+  | { type: "voice_interrupted"; turn_id: VoiceTurnId };
 
 /** One row in the approval sheet. Carries no argument values. */
 export interface PendingApproval {
@@ -101,11 +115,16 @@ export type ServerFrame =
   /** A tool finished. `ok` is false for a handled failure, which does not end the turn. */
   | { type: "tool_completed"; call_id: string; name: string; ok: boolean }
   | { type: "turn_end"; message_id: string }
-  | { type: "voice_state_changed"; state: VoiceState }
-  | { type: "voice_transcript_partial"; text: string }
-  | { type: "voice_transcript_final"; text: string }
-  | { type: "voice_tts_chunk"; audio_base64: string; is_final: boolean }
-  | { type: "voice_end" }
+  | { type: "voice_state_changed"; turn_id: VoiceTurnId; state: VoiceState }
+  | { type: "voice_transcript_partial"; turn_id: VoiceTurnId; text: string }
+  | { type: "voice_transcript_final"; turn_id: VoiceTurnId; text: string }
+  | {
+      type: "voice_tts_chunk";
+      turn_id: VoiceTurnId;
+      audio_base64: string;
+      is_final: boolean;
+    }
+  | { type: "voice_end"; turn_id: VoiceTurnId }
   | { type: "error"; code: string; message: string };
 
 /** A user-owned project. Mirrors `assistant_protocol::ProjectItem`. */

@@ -12,10 +12,19 @@ use uuid::Uuid;
 /// Bumped whenever a breaking change is made to the types in this crate. The
 /// client sends the version it was built against so the server can reject a
 /// mismatched build instead of misparsing it.
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 
 pub type ConversationId = Uuid;
 pub type MessageId = Uuid;
+
+/// Identifies one voice turn: a single press-speak-answer cycle.
+///
+/// Minted by the client when it starts listening and echoed on every voice
+/// frame the server sends back. Without it a late transcript or a late audio
+/// chunk from an abandoned turn is indistinguishable from the current one, and
+/// the client has no basis on which to reject it -- which is how stale audio
+/// plays over a new question.
+pub type VoiceTurnId = Uuid;
 
 /// Response of `GET /v1/health`. Used by the mobile app to prove connectivity
 /// and to detect a protocol mismatch before anything else is attempted.
@@ -45,6 +54,25 @@ pub struct ApiError {
     pub message: String,
 }
 
+/// Where a voice turn is in its lifecycle.
+///
+/// This lives in the protocol crate so the server, the state machine in
+/// `assistant-voice` and the mobile client all name the same states. It used to
+/// travel as a bare `String` written by hand at each call site, which meant the
+/// deterministic transition table in `assistant-voice` validated nothing that
+/// actually reached the client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VoiceState {
+    Idle,
+    Listening,
+    Transcribing,
+    Thinking,
+    Speaking,
+    Interrupted,
+    Error,
+}
+
 /// Frames sent by the client over `WS /v1/conversation/:id/stream`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -67,17 +95,24 @@ pub enum ClientFrame {
         approval_id: ApprovalId,
     },
 
-    /// Start a voice session.
-    VoiceStart,
+    /// Start a voice session. The client mints the turn id.
+    VoiceStart {
+        turn_id: VoiceTurnId,
+    },
     /// Send an audio chunk for live transcription (base64 encoded).
     VoiceAudioChunk {
+        turn_id: VoiceTurnId,
         data_base64: String,
         encoding: String,
     },
     /// Cancel the active voice session.
-    VoiceCancel,
+    VoiceCancel {
+        turn_id: VoiceTurnId,
+    },
     /// Signal barge-in / interruption (user tapped mic while assistant was speaking).
-    VoiceInterrupted,
+    VoiceInterrupted {
+        turn_id: VoiceTurnId,
+    },
 }
 
 /// Frames sent by the server over the conversation socket.
@@ -115,23 +150,29 @@ pub enum ServerFrame {
 
     /// Voice state updated.
     VoiceStateChanged {
-        state: String,
+        turn_id: VoiceTurnId,
+        state: VoiceState,
     },
     /// Partial live STT transcript.
     VoiceTranscriptPartial {
+        turn_id: VoiceTurnId,
         text: String,
     },
     /// Final STT transcript.
     VoiceTranscriptFinal {
+        turn_id: VoiceTurnId,
         text: String,
     },
     /// TTS audio chunk (base64 encoded).
     VoiceTtsChunk {
+        turn_id: VoiceTurnId,
         audio_base64: String,
         is_final: bool,
     },
     /// Voice response turn finished.
-    VoiceEnd,
+    VoiceEnd {
+        turn_id: VoiceTurnId,
+    },
 
     /// The approvals this user still has to answer.
     PendingApprovals {

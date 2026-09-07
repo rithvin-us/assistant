@@ -11,8 +11,9 @@ pub use cartesia_tts::CartesiaTtsProvider;
 pub use fake_providers::{FakeSpeechToTextProvider, FakeTextToSpeechProvider};
 pub use state_machine::{StateMachineError, VoiceState, VoiceStateMachine};
 pub use traits::{
-    AudioEncoding, AudioPayload, SpeechToTextProvider, SttPartial, SttResponse,
-    TextToSpeechProvider, TtsAudioChunk, TtsRequest, VoiceError,
+    AudioEncoding, AudioPayload, CARTESIA_API_VERSION, DEFAULT_STT_MODEL, DEFAULT_TTS_MODEL,
+    SpeechToTextProvider, SttPartial, SttResponse, TextToSpeechProvider, TtsAudioChunk, TtsRequest,
+    VoiceError,
 };
 
 #[cfg(test)]

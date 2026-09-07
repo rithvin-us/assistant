@@ -1,6 +1,8 @@
 //! Cartesia Text-to-Speech (TTS) implementation.
 
-use crate::traits::{AudioEncoding, TextToSpeechProvider, TtsAudioChunk, TtsRequest, VoiceError};
+use crate::traits::{
+    AudioEncoding, TextToSpeechProvider, TtsAudioChunk, TtsRequest, VoiceError, map_reqwest_error,
+};
 use serde::Serialize;
 use tokio::sync::mpsc;
 
@@ -36,9 +38,15 @@ struct CartesiaOutputFormat<'a> {
 impl CartesiaTtsProvider {
     pub fn new(api_key: String, model: Option<String>, default_voice_id: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            // A timeout on the client itself, so it applies to every request
+            // including connect and read. Without one a stalled provider hangs
+            // the turn indefinitely.
+            client: reqwest::Client::builder()
+                .timeout(crate::traits::DEFAULT_PROVIDER_TIMEOUT)
+                .build()
+                .unwrap_or_default(),
             api_key,
-            model: model.unwrap_or_else(|| "sonic-2".to_string()),
+            model: model.unwrap_or_else(|| crate::traits::DEFAULT_TTS_MODEL.to_string()),
             default_voice_id: default_voice_id
                 .unwrap_or_else(|| "a0e99841-438c-4a64-b679-ae501e7d6091".to_string()),
             endpoint: "https://api.cartesia.ai/tts/bytes".to_string(),
@@ -96,12 +104,12 @@ impl TextToSpeechProvider for CartesiaTtsProvider {
             .client
             .post(&self.endpoint)
             .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Cartesia-Version", "2024-06-10")
+            .header("Cartesia-Version", crate::traits::CARTESIA_API_VERSION)
             .header("Content-Type", "application/json")
             .json(&payload)
             .send()
             .await
-            .map_err(|e| VoiceError::Network(e.to_string()))?;
+            .map_err(map_reqwest_error)?;
 
         let status = res.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {
@@ -118,10 +126,7 @@ impl TextToSpeechProvider for CartesiaTtsProvider {
             });
         }
 
-        let bytes = res
-            .bytes()
-            .await
-            .map_err(|e| VoiceError::Network(e.to_string()))?;
+        let bytes = res.bytes().await.map_err(map_reqwest_error)?;
 
         Ok(bytes.to_vec())
     }

@@ -158,8 +158,8 @@ impl Config {
                 .ok()
                 .map(|key| key.trim().to_string())
                 .filter(|key| !key.is_empty()),
-            cartesia_stt_model: env_or("CARTESIA_STT_MODEL", "ink-en-us"),
-            cartesia_tts_model: env_or("CARTESIA_TTS_MODEL", "sonic-english"),
+            cartesia_stt_model: env_or("CARTESIA_STT_MODEL", assistant_voice::DEFAULT_STT_MODEL),
+            cartesia_tts_model: env_or("CARTESIA_TTS_MODEL", assistant_voice::DEFAULT_TTS_MODEL),
             cartesia_tts_voice_id: env_or(
                 "CARTESIA_TTS_VOICE_ID",
                 "a0e99841-438c-4a64-b679-ae501e7d6091",

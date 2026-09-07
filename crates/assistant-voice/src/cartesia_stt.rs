@@ -1,6 +1,8 @@
 //! Cartesia Speech-to-Text (STT) implementation.
 
-use crate::traits::{AudioPayload, SpeechToTextProvider, SttResponse, VoiceError};
+use crate::traits::{
+    AudioPayload, SpeechToTextProvider, SttResponse, VoiceError, map_reqwest_error,
+};
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 
@@ -24,9 +26,15 @@ struct CartesiaSttResponse {
 impl CartesiaSttProvider {
     pub fn new(api_key: String, model: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::new(),
+            // A timeout on the client itself, so it applies to every request
+            // including connect and read. Without one a stalled provider hangs
+            // the turn indefinitely.
+            client: reqwest::Client::builder()
+                .timeout(crate::traits::DEFAULT_PROVIDER_TIMEOUT)
+                .build()
+                .unwrap_or_default(),
             api_key,
-            model: model.unwrap_or_else(|| "ink-en-us".to_string()),
+            model: model.unwrap_or_else(|| crate::traits::DEFAULT_STT_MODEL.to_string()),
             endpoint: "https://api.cartesia.ai/stt".to_string(),
         }
     }
@@ -73,18 +81,17 @@ impl SpeechToTextProvider for CartesiaSttProvider {
 
         let form = Form::new()
             .part("file", part)
-            .text("model", self.model.clone())
-            .text("model_id", self.model.clone());
+            .text("model", self.model.clone());
 
         let res = self
             .client
             .post(&self.endpoint)
             .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Cartesia-Version", "2024-06-10")
+            .header("Cartesia-Version", crate::traits::CARTESIA_API_VERSION)
             .multipart(form)
             .send()
             .await
-            .map_err(|e| VoiceError::Network(e.to_string()))?;
+            .map_err(map_reqwest_error)?;
 
         let status = res.status();
         if status == reqwest::StatusCode::UNAUTHORIZED {

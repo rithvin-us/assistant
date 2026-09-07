@@ -12,7 +12,9 @@ use assistant_core::{
     actions::{ApprovalId, ResolutionOutcome},
     turn::TurnRequest,
 };
-use assistant_protocol::{ApiError, ApprovalOutcome, ClientFrame, PROTOCOL_VERSION, ServerFrame};
+use assistant_protocol::{
+    ApiError, ApprovalOutcome, ClientFrame, PROTOCOL_VERSION, ServerFrame, VoiceState, VoiceTurnId,
+};
 use assistant_tools::ApprovalStatus;
 use axum::{
     Extension,
@@ -51,6 +53,14 @@ async fn handle(
     // future voice client uses for barge-in: interrupting playback cancels the
     // turn rather than waiting for it to finish.
     let socket_cancel = CancellationToken::new();
+
+    // The voice turn currently allowed to speak, and the token that stops it.
+    //
+    // Frames carrying any other turn id are ignored: a transcript or an audio
+    // chunk from a turn the user has already abandoned must never reach the
+    // client, or stale audio plays over a new question. Barge-in cancels this
+    // token, which propagates into the model call and the provider requests.
+    let mut voice_turn: Option<(VoiceTurnId, CancellationToken)> = None;
 
     let mut closed_by_peer = false;
 
@@ -156,30 +166,70 @@ async fn handle(
                 }
             }
 
-            ClientFrame::VoiceStart => {
+            ClientFrame::VoiceStart { turn_id } => {
+                // Starting a turn supersedes any earlier one. Cancel it rather
+                // than leaving it running to deliver a late answer.
+                if let Some((_, previous)) =
+                    voice_turn.replace((turn_id, socket_cancel.child_token()))
+                {
+                    previous.cancel();
+                }
                 let _ = send(
                     &mut socket,
                     ServerFrame::VoiceStateChanged {
-                        state: "listening".into(),
+                        turn_id,
+                        state: VoiceState::Listening,
                     },
                 )
                 .await;
             }
 
-            ClientFrame::VoiceCancel | ClientFrame::VoiceInterrupted => {
-                let _ = send(
-                    &mut socket,
-                    ServerFrame::VoiceStateChanged {
-                        state: "interrupted".into(),
-                    },
-                )
-                .await;
+            ClientFrame::VoiceCancel { turn_id } | ClientFrame::VoiceInterrupted { turn_id } => {
+                // Only the owner of the active turn may cancel it.
+                match &voice_turn {
+                    Some((active, cancel)) if *active == turn_id => {
+                        // This is the barge-in seam: cancelling propagates into
+                        // the model call and the provider requests, so an
+                        // interrupted turn stops producing rather than merely
+                        // being ignored.
+                        cancel.cancel();
+                        voice_turn = None;
+                        let _ = send(
+                            &mut socket,
+                            ServerFrame::VoiceStateChanged {
+                                turn_id,
+                                state: VoiceState::Interrupted,
+                            },
+                        )
+                        .await;
+                    }
+                    _ => {
+                        // A cancel for a turn that is already over. Nothing to
+                        // stop, and nothing to tell the client about.
+                    }
+                }
             }
 
             ClientFrame::VoiceAudioChunk {
+                turn_id,
                 data_base64,
                 encoding,
             } => {
+                // Adopt the turn if the client never sent VoiceStart, but never
+                // let a chunk from a superseded turn resurrect it.
+                let turn_cancel = match &voice_turn {
+                    Some((active, cancel)) if *active == turn_id => cancel.clone(),
+                    Some(_) => continue,
+                    None => {
+                        let cancel = socket_cancel.child_token();
+                        voice_turn = Some((turn_id, cancel.clone()));
+                        cancel
+                    }
+                };
+                if turn_cancel.is_cancelled() {
+                    continue;
+                }
+
                 use base64::Engine;
                 let audio_bytes =
                     match base64::engine::general_purpose::STANDARD.decode(&data_base64) {
@@ -198,7 +248,8 @@ async fn handle(
                 let _ = send(
                     &mut socket,
                     ServerFrame::VoiceStateChanged {
-                        state: "transcribing".into(),
+                        turn_id,
+                        state: VoiceState::Transcribing,
                     },
                 )
                 .await;
@@ -221,7 +272,7 @@ async fn handle(
                             let _ = send(
                                 &mut socket,
                                 ServerFrame::Error(ApiError {
-                                    code: "stt_error".into(),
+                                    code: e.code().into(),
                                     message: e.to_string(),
                                 }),
                             )
@@ -230,12 +281,33 @@ async fn handle(
                         }
                     }
                 } else {
-                    "What should I do today?".to_string()
+                    // Previously this substituted the invented utterance "What
+                    // should I do today?" and ran a real turn on it -- tools and
+                    // all. Saying nothing was heard is the only honest answer
+                    // when there is no transcription provider.
+                    let _ = send(
+                        &mut socket,
+                        ServerFrame::Error(ApiError {
+                            code: "stt_unconfigured".into(),
+                            message: "Speech-to-text is not configured on the server, so nothing was transcribed.".into(),
+                        }),
+                    )
+                    .await;
+                    let _ = send(
+                        &mut socket,
+                        ServerFrame::VoiceStateChanged {
+                            turn_id,
+                            state: VoiceState::Error,
+                        },
+                    )
+                    .await;
+                    continue;
                 };
 
                 let _ = send(
                     &mut socket,
                     ServerFrame::VoiceTranscriptFinal {
+                        turn_id,
                         text: transcript_text.clone(),
                     },
                 )
@@ -244,24 +316,42 @@ async fn handle(
                 let _ = send(
                     &mut socket,
                     ServerFrame::VoiceStateChanged {
-                        state: "thinking".into(),
+                        turn_id,
+                        state: VoiceState::Thinking,
                     },
                 )
                 .await;
 
                 let request = TurnRequest::new(conversation_id, principal.clone(), transcript_text);
 
-                if run_turn(&mut socket, &state, request, socket_cancel.child_token())
-                    .await
-                    .is_err()
+                let answer = match run_turn(&mut socket, &state, request, turn_cancel.clone()).await
                 {
-                    break;
+                    Ok(text) => text,
+                    Err(_) => break,
+                };
+
+                // Nothing to say is not the same as speaking a filler line.
+                let spoken = answer.trim();
+                if spoken.is_empty() {
+                    // The turn is over; retire it so a late chunk cannot revive it.
+                    voice_turn = None;
+                    let _ = send(&mut socket, ServerFrame::VoiceEnd { turn_id }).await;
+                    let _ = send(
+                        &mut socket,
+                        ServerFrame::VoiceStateChanged {
+                            turn_id,
+                            state: VoiceState::Idle,
+                        },
+                    )
+                    .await;
+                    continue;
                 }
 
                 let _ = send(
                     &mut socket,
                     ServerFrame::VoiceStateChanged {
-                        state: "speaking".into(),
+                        turn_id,
+                        state: VoiceState::Speaking,
                     },
                 )
                 .await;
@@ -274,31 +364,64 @@ async fn handle(
                         Some(state.cartesia_tts_voice_id.clone()),
                     );
                     let req = assistant_voice::TtsRequest {
-                        text: "I checked your schedule and tasks for today.".to_string(),
+                        // The assistant's actual answer. This was a hardcoded
+                        // sentence, so the user heard the same line whatever
+                        // they asked and whatever the model replied.
+                        text: spoken.to_string(),
                         voice_id: None,
                         model: None,
                         encoding: Some(assistant_voice::AudioEncoding::Wav),
                         sample_rate: Some(24000),
                     };
                     use assistant_voice::TextToSpeechProvider;
-                    if let Ok(audio) = tts.synthesize(req).await {
-                        let b64 = base64::engine::general_purpose::STANDARD.encode(&audio);
-                        let _ = send(
-                            &mut socket,
-                            ServerFrame::VoiceTtsChunk {
-                                audio_base64: b64,
-                                is_final: true,
-                            },
-                        )
-                        .await;
+                    match tts.synthesize(req).await {
+                        Ok(audio) => {
+                            let b64 = base64::engine::general_purpose::STANDARD.encode(&audio);
+                            let _ = send(
+                                &mut socket,
+                                ServerFrame::VoiceTtsChunk {
+                                    turn_id,
+                                    audio_base64: b64,
+                                    is_final: true,
+                                },
+                            )
+                            .await;
+                        }
+                        Err(e) => {
+                            // A failed synthesis used to be swallowed entirely:
+                            // the client saw "speaking" then silence. The answer
+                            // is already on screen as text, so say the voice part
+                            // failed rather than pretending it played.
+                            let _ = send(
+                                &mut socket,
+                                ServerFrame::Error(ApiError {
+                                    code: e.code().into(),
+                                    message: e.to_string(),
+                                }),
+                            )
+                            .await;
+                        }
                     }
+                } else {
+                    // No TTS provider. The text answer stands on its own; do not
+                    // leave the client waiting for audio that will never arrive.
+                    let _ = send(
+                        &mut socket,
+                        ServerFrame::Error(ApiError {
+                            code: "tts_unconfigured".into(),
+                            message: "Text-to-speech is not configured on the server, so the reply was not spoken.".into(),
+                        }),
+                    )
+                    .await;
                 }
 
-                let _ = send(&mut socket, ServerFrame::VoiceEnd).await;
+                voice_turn = None;
+                let _ = send(&mut socket, ServerFrame::VoiceEnd { turn_id }).await;
                 let _ = send(
                     &mut socket,
                     ServerFrame::VoiceStateChanged {
-                        state: "idle".into(),
+                        turn_id,
+                        state: VoiceState::Idle,
                     },
                 )
                 .await;
@@ -323,18 +446,29 @@ async fn handle(
 /// Returns `Err` only when the socket itself failed, so the caller can stop
 /// reading. A failed *turn* is delivered as an error frame and the socket stays
 /// open, because the user can reasonably try again.
+/// Runs one turn, forwarding every frame to the client.
+///
+/// Returns the assistant's spoken text, accumulated from the deltas as they
+/// stream past. The voice path needs the real answer to synthesise: it used to
+/// speak a hardcoded sentence because this text was streamed to the client and
+/// then dropped on the floor. The text path ignores the return value.
 async fn run_turn(
     socket: &mut WebSocket,
     state: &SharedState,
     request: TurnRequest,
     cancel: CancellationToken,
-) -> Result<(), axum::Error> {
+) -> Result<String, axum::Error> {
     let mut events = state.orchestrator.clone().stream(request, cancel.clone());
+    let mut answer = String::new();
 
     while let Some(event) = events.recv().await {
         let Some(frame) = orchestration::to_frame(event) else {
             continue;
         };
+
+        if let ServerFrame::AssistantDelta { text, .. } = &frame {
+            answer.push_str(text);
+        }
 
         if send(socket, frame).await.is_err() {
             // The client is gone. Stop the turn rather than letting it run on
@@ -346,7 +480,7 @@ async fn run_turn(
         }
     }
 
-    Ok(())
+    Ok(answer)
 }
 
 async fn send(socket: &mut WebSocket, frame: ServerFrame) -> Result<(), axum::Error> {
