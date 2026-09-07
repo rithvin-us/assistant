@@ -82,8 +82,8 @@ pub async fn transcribe(
             "gemini-2.5-flash"
         };
 
-        // Try primary model, fallback to gemini-2.5-pro or gemini-flash-latest on 529/503 server spikes
-        let candidate_models = [primary_model, "gemini-2.5-pro", "gemini-flash-latest"];
+        // Try primary model, fallback to gemini-3.5-flash or gemini-flash-latest on 529/503 server spikes (100% Free Tier models)
+        let candidate_models = [primary_model, "gemini-3.5-flash", "gemini-flash-latest"];
         let mut last_error_msg = String::new();
 
         for (attempt, model_name) in candidate_models.iter().enumerate() {
