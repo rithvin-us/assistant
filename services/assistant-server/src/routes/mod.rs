@@ -15,7 +15,9 @@ pub mod transcribe;
 pub mod voice;
 
 use axum::{
-    Router, middleware,
+    Router,
+    extract::DefaultBodyLimit,
+    middleware,
     routing::{delete, get, patch, post},
 };
 
@@ -168,7 +170,19 @@ pub fn router(state: SharedState) -> Router {
         .route("/v1/planning/plan", post(planning::generate_plan))
         .route("/v1/planning/conflicts", get(planning::get_conflicts))
         // Voice Integration (M10)
-        .route("/v1/voice/transcribe", post(voice::transcribe))
+        //
+        // Axum's default body limit is 2 MB and nothing overrode it, so the
+        // handler's own size check could never be reached and an ordinary
+        // recording could be rejected by the framework with no explanatory
+        // code. The limit here sits just above the handler's, so the handler
+        // answers with a proper `audio_too_large` for anything oversized and
+        // this remains only a backstop against a body that should never be
+        // buffered at all.
+        .route(
+            "/v1/voice/transcribe",
+            post(voice::transcribe)
+                .layer(DefaultBodyLimit::max(voice::MAX_AUDIO_BYTES + 1024 * 1024)),
+        )
         .route("/v1/voice/speak", post(voice::speak))
         .route("/v1/voice/diagnostic", get(voice::diagnostic))
         .route_layer(middleware::from_fn_with_state(

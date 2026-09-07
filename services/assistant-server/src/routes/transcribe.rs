@@ -127,7 +127,10 @@ pub async fn transcribe(
     })?;
 
     if !status.is_success() {
-        tracing::error!(status = %status, body = %text, "OpenAI transcription error");
+        // The status is the diagnostic. The body is a provider response we do
+        // not control and cannot vet, so it stays out of the log rather than
+        // risking quota, account or prompt detail landing in it.
+        tracing::error!(status = %status, "OpenAI transcription error");
         let parsed: Result<OpenAIWhisperResponse, _> = serde_json::from_str(&text);
         let detail = parsed
             .ok()

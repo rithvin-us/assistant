@@ -43,6 +43,16 @@ pub struct VoiceDiagnosticResponse {
     pub status: String,
 }
 
+/// Ceiling on an uploaded audio body.
+///
+/// There was no limit at all: any body size was forwarded straight to the
+/// provider, so one request could spend an unbounded amount of money and hold
+/// an unbounded amount of memory.
+pub const MAX_AUDIO_BYTES: usize = 10 * 1024 * 1024;
+
+/// Ceiling on text submitted for synthesis, for the same reason.
+const MAX_TTS_CHARS: usize = 4_000;
+
 pub async fn transcribe(
     State(state): State<SharedState>,
     Extension(_principal): Extension<Principal>,
@@ -55,6 +65,22 @@ pub async fn transcribe(
             Json(ApiError {
                 code: "empty_audio".into(),
                 message: "Audio payload cannot be empty.".into(),
+            }),
+        ));
+    }
+
+    // An unbounded audio body is a cheap way to make the server buy a very
+    // expensive provider call, or to exhaust its memory. A minute of speech is
+    // far below this; anything above it is not someone talking to an assistant.
+    if body.len() > MAX_AUDIO_BYTES {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ApiError {
+                code: "audio_too_large".into(),
+                message: format!(
+                    "Audio payload is larger than the {} MB limit.",
+                    MAX_AUDIO_BYTES / (1024 * 1024)
+                ),
             }),
         ));
     }
@@ -114,6 +140,17 @@ pub async fn speak(
             Json(ApiError {
                 code: "empty_text".into(),
                 message: "Text string cannot be empty.".into(),
+            }),
+        ));
+    }
+
+    // Synthesis is billed by length, so unbounded text is an unbounded bill.
+    if payload.text.chars().count() > MAX_TTS_CHARS {
+        return Err((
+            StatusCode::PAYLOAD_TOO_LARGE,
+            Json(ApiError {
+                code: "text_too_long".into(),
+                message: format!("Text is longer than the {MAX_TTS_CHARS} character limit."),
             }),
         ));
     }

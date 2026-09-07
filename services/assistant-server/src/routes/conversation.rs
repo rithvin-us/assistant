@@ -231,10 +231,38 @@ async fn handle(
                 }
 
                 use base64::Engine;
+
+                // Bound the encoded form before decoding, so an oversized frame
+                // cannot force a large allocation just to be rejected after.
+                const MAX_ENCODED_AUDIO: usize = 14 * 1024 * 1024;
+                if data_base64.len() > MAX_ENCODED_AUDIO {
+                    let _ = send(
+                        &mut socket,
+                        ServerFrame::Error(ApiError {
+                            code: "audio_too_large".into(),
+                            message: "Audio chunk is too large.".into(),
+                        }),
+                    )
+                    .await;
+                    continue;
+                }
+
                 let audio_bytes =
                     match base64::engine::general_purpose::STANDARD.decode(&data_base64) {
                         Ok(b) => b,
-                        Err(_) => continue,
+                        Err(_) => {
+                            // Malformed audio used to be dropped in silence, so
+                            // the client waited for a turn that would never come.
+                            let _ = send(
+                                &mut socket,
+                                ServerFrame::Error(ApiError {
+                                    code: "invalid_audio_encoding".into(),
+                                    message: "Audio chunk was not valid base64.".into(),
+                                }),
+                            )
+                            .await;
+                            continue;
+                        }
                     };
 
                 let enc = if encoding.contains("mp3") {
