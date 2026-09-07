@@ -18,7 +18,7 @@
  * screen should still leave the app, because that is what the user means.
  */
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 /** Marks the entries this hook owns, so it ignores anyone else's. */
 const MARKER = "assistant:screen";
@@ -29,6 +29,15 @@ const MARKER = "assistant:screen";
  *                screen; it must not itself push history.
  */
 export function useAndroidBack(active: boolean, onBack: () => void): void {
+  // Held in a ref so the subscription depends only on `active`. Callers pass
+  // inline arrows, and a new identity on every render would otherwise tear the
+  // subscription down and push a fresh history entry each time -- growing the
+  // stack without bound and making back appear to do nothing.
+  const handler = useRef(onBack);
+  useEffect(() => {
+    handler.current = onBack;
+  }, [onBack]);
+
   useEffect(() => {
     if (!active) return;
 
@@ -37,7 +46,7 @@ export function useAndroidBack(active: boolean, onBack: () => void): void {
     window.history.pushState({ [MARKER]: true }, "");
 
     const onPopState = () => {
-      onBack();
+      handler.current();
     };
 
     window.addEventListener("popstate", onPopState);
@@ -52,5 +61,5 @@ export function useAndroidBack(active: boolean, onBack: () => void): void {
         window.history.back();
       }
     };
-  }, [active, onBack]);
+  }, [active]);
 }
