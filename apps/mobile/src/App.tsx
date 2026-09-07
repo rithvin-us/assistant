@@ -5,10 +5,13 @@
  * productivity screens, and Google ecosystem features.
  */
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import Box from "@mui/material/Box";
 import Fab from "@mui/material/Fab";
 import ChatBubbleOutlineRoundedIcon from "@mui/icons-material/ChatBubbleOutlineRounded";
+
+import ScreenTransition from "./components/ScreenTransition";
+import { useAndroidBack } from "./lib/useAndroidBack";
 
 import HomeScreen from "./screens/HomeScreen";
 import TasksScreen from "./screens/TasksScreen";
@@ -46,6 +49,18 @@ export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
   const [currentScreen, setCurrentScreen] = useState<ScreenType>("home");
 
+  const goHome = useCallback(() => setCurrentScreen("home"), []);
+
+  // Android's back button and back gesture reach us as one event. On a
+  // sub-screen they used to leave the app, which reads as a crash; now they
+  // return to the home screen. From home, back still exits, because that is
+  // what the user means there.
+  useAndroidBack(currentScreen !== "home", goHome);
+
+  // A sheet is the shallowest thing on screen, so back should close it before
+  // it touches navigation.
+  useAndroidBack(chatOpen, () => setChatOpen(false));
+
   return (
     <Box
       sx={{
@@ -56,6 +71,7 @@ export default function App() {
         pb: "env(safe-area-inset-bottom)",
       }}
     >
+      <ScreenTransition screenKey={currentScreen} back={currentScreen === "home"}>
       {currentScreen === "home" && (
         <HomeScreen onOpenScreen={(screen) => setCurrentScreen(screen)} />
       )}
@@ -105,6 +121,7 @@ export default function App() {
         <DocumentsScreen onBack={() => setCurrentScreen("home")} />
       )}
       {currentScreen === "planning" && <PlanningScreen />}
+      </ScreenTransition>
 
       {currentScreen === "home" && (
         <Fab

@@ -19,7 +19,7 @@
  * finger is down so tracking is 1:1, re-enabled on release so the snap animates.
  */
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, ReactNode } from "react";
 import Box from "@mui/material/Box";
 import ButtonBase from "@mui/material/ButtonBase";
@@ -70,7 +70,25 @@ export default function SwipeableRow({
 }: SwipeableRowProps) {
   const trayWidth = actions.length * actionWidth;
 
-  const [offset, setOffset] = useState(0);
+  const [offset, setOffsetState] = useState(0);
+  /**
+   * Mirrors `offset` synchronously. State lags by a frame and settling cannot
+   * afford to: reading the rendered value made a slow drag that ended near the
+   * threshold settle against a stale position.
+   */
+  const offsetRef = useRef(0);
+
+  // Covers render-phase updates (the forceClosed branch below), which must not
+  // write a ref directly.
+  useEffect(() => {
+    offsetRef.current = offset;
+  }, [offset]);
+
+  /** Only for event handlers and effects, never during render. */
+  const setOffset = useCallback((next: number) => {
+    offsetRef.current = next;
+    setOffsetState(next);
+  }, []);
   const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -80,30 +98,56 @@ export default function SwipeableRow({
   const lastX = useRef(0);
   const lastT = useRef(0);
   const velocity = useRef(0);
+  /** Timestamp of the last move, so a pause can discard stale velocity. */
+  const lastMoveAt = useRef(0);
   const axis = useRef<Axis>("undecided");
   /** Guards the one-shot haptic so crossing the threshold buzzes once, not per frame. */
   const passedThreshold = useRef(false);
   /** Distinguishes a tap from the tail of a swipe when the row is released. */
   const moved = useRef(false);
+  /** Set when a gesture settles, to swallow the click the WebView emits after. */
+  const swallowNextClick = useRef(false);
 
   const open = useCallback(() => {
     setOffset(-trayWidth);
     onOpenChange?.(true);
-  }, [trayWidth, onOpenChange]);
+  }, [trayWidth, onOpenChange, setOffset]);
 
   const close = useCallback(() => {
     setOffset(0);
     onOpenChange?.(false);
-  }, [onOpenChange]);
+  }, [onOpenChange, setOffset]);
 
   // The parent closes other rows when one opens. Adjusting state during render
   // (React's documented derived-state escape hatch) rather than in an effect:
   // an effect would paint the row open for one frame and then snap it shut.
+  /** False once React has torn the row down, so async cleanup can bail out. */
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
   const [prevForceClosed, setPrevForceClosed] = useState(forceClosed);
   if (forceClosed !== prevForceClosed) {
     setPrevForceClosed(forceClosed);
-    if (forceClosed) setOffset(0);
+    if (forceClosed) setOffsetState(0);
   }
+
+  // Scrolling the list past an open row should put it away. Leaving a tray
+  // hanging open while the user scrolls elsewhere is how an accidental Delete
+  // tap happens. Capture-phase so it sees the scroll on whichever ancestor
+  // actually scrolls, and passive so it never blocks the scroll itself.
+  const isOpen = offset !== 0;
+  useEffect(() => {
+    if (!isOpen) return;
+    const onScroll = () => close();
+    document.addEventListener("scroll", onScroll, { capture: true, passive: true });
+    return () =>
+      document.removeEventListener("scroll", onScroll, { capture: true });
+  }, [isOpen, close]);
 
   const handlePointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (disabled || busy) return;
@@ -145,6 +189,7 @@ export default function SwipeableRow({
       velocity.current = (e.clientX - lastX.current) / dt;
       lastX.current = e.clientX;
       lastT.current = e.timeStamp;
+      lastMoveAt.current = e.timeStamp;
     }
 
     const next = clampOffset(startOffset.current + dx, trayWidth);
@@ -163,7 +208,12 @@ export default function SwipeableRow({
     setDragging(false);
     if (axis.current !== "horizontal") return;
 
-    if (settleOpen(offset, velocity.current, trayWidth)) return open();
+    // A finger that stopped before lifting is not a flick, whatever its last
+    // measured speed was.
+    const stale = e.timeStamp - lastMoveAt.current > 80;
+    const v = stale ? 0 : velocity.current;
+    swallowNextClick.current = true;
+    if (settleOpen(offsetRef.current, v, trayWidth)) return open();
     close();
   };
 
@@ -182,12 +232,14 @@ export default function SwipeableRow({
       await action.onPress();
       if (action.destructive) haptic("confirm");
     } finally {
-      setBusy(false);
-      close();
+      // A destructive action usually unmounts this row, so guard the cleanup
+      // rather than writing state into a component that is already gone.
+      if (mounted.current) {
+        setBusy(false);
+        close();
+      }
     }
   };
-
-  const isOpen = offset !== 0;
 
   return (
     <Box sx={{ position: "relative", overflow: "hidden", bgcolor: background }}>
@@ -231,12 +283,23 @@ export default function SwipeableRow({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerCancel}
-        // A tap that ends a swipe must not also activate the row beneath.
+        // Three cases, and they must not be confused:
+        //   1. the click the WebView emits right after a swipe -- swallow it,
+        //      and leave the tray exactly where the gesture put it;
+        //   2. a real tap on a row whose tray is open -- close the tray and
+        //      treat the tap as the dismissal, not as opening the item;
+        //   3. an ordinary tap -- let it through.
         onClickCapture={(e) => {
-          if (moved.current || isOpen) {
+          if (swallowNextClick.current) {
+            swallowNextClick.current = false;
             e.stopPropagation();
             e.preventDefault();
-            if (isOpen) close();
+            return;
+          }
+          if (isOpen) {
+            e.stopPropagation();
+            e.preventDefault();
+            close();
           }
         }}
         sx={{

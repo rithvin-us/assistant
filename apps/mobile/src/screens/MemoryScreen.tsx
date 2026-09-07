@@ -44,6 +44,8 @@ import HistoryToggleOffIcon from "@mui/icons-material/HistoryToggleOff";
 import CompareArrowsRoundedIcon from "@mui/icons-material/CompareArrowsRounded";
 import InsightsRoundedIcon from "@mui/icons-material/InsightsRounded";
 
+import PullToRefresh from "../components/PullToRefresh";
+
 import type { MemoryItem, MemoryKind } from "../api/types";
 import {
   listMemories,
@@ -164,6 +166,10 @@ export default function MemoryScreen({ onBack }: MemoryScreenProps) {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleRefresh = async () => {
+    await reload();
   };
 
   useEffect(() => {
@@ -438,7 +444,7 @@ export default function MemoryScreen({ onBack }: MemoryScreenProps) {
       </Box>
 
       {/* Body */}
-      <Box sx={{ flex: 1, overflowY: "auto", px: 2, pb: 12 }}>
+      <PullToRefresh onRefresh={handleRefresh} sx={{ px: 2, pb: 12 }}>
         {errorMsg && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {errorMsg}
@@ -527,7 +533,7 @@ export default function MemoryScreen({ onBack }: MemoryScreenProps) {
             </Card>
           ))}
         </Stack>
-      </Box>
+      </PullToRefresh>
 
       {/* Floating add */}
       <Fab

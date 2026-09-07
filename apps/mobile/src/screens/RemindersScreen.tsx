@@ -19,11 +19,16 @@ import Card from "@mui/material/Card";
 import CardContent from "@mui/material/CardContent";
 import IconButton from "@mui/material/IconButton";
 import Fab from "@mui/material/Fab";
+import ButtonBase from "@mui/material/ButtonBase";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
 import AlarmRoundedIcon from "@mui/icons-material/AlarmRounded";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
+import CheckRoundedIcon from "@mui/icons-material/CheckRounded";
+
+import PullToRefresh from "../components/PullToRefresh";
+import SwipeableRow from "../components/SwipeableRow";
 
 import type { ReminderItem } from "../api/types";
 import {
@@ -42,6 +47,8 @@ export default function RemindersScreen({ onBack }: RemindersScreenProps) {
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
   const [reminderStatusFilter, setReminderStatusFilter] = useState<string>("pending");
 
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [openRowId, setOpenRowId] = useState<string | null>(null);
   const [reminderModalOpen, setReminderModalOpen] = useState(false);
   const [editingReminder, setEditingReminder] = useState<ReminderItem | null>(null);
   const [reminderTitle, setReminderTitle] = useState("");
@@ -57,6 +64,10 @@ export default function RemindersScreen({ onBack }: RemindersScreenProps) {
     } catch (err) {
       console.warn("Failed to load reminders:", err);
     }
+  };
+
+  const handleRefresh = async () => {
+    await loadData();
   };
 
   useEffect(() => {
@@ -118,23 +129,41 @@ export default function RemindersScreen({ onBack }: RemindersScreenProps) {
   };
 
   const handleToggleReminderHandled = async (reminder: ReminderItem) => {
+    const previousStatus = reminder.status;
     const nextStatus = reminder.status === "handled" ? "pending" : "handled";
+    // Optimistic on purpose: completion is frequent and reversible, and a
+    // control that waits for a round trip feels broken. The rollback below is
+    // what keeps it honest.
+    setReminders((prev) =>
+      prev.map((r) => (r.id === reminder.id ? { ...r, status: nextStatus } : r))
+    );
     try {
-      setReminders((prev) =>
-        prev.map((r) => (r.id === reminder.id ? { ...r, status: nextStatus } : r))
-      );
       await updateReminder(reminder.id, { status: nextStatus });
+      setActionError(null);
+      await loadData();
     } catch (err) {
-      console.error(err);
+      setReminders((prev) =>
+        prev.map((r) =>
+          r.id === reminder.id ? { ...r, status: previousStatus } : r
+        )
+      );
+      setActionError(
+        err instanceof Error ? err.message : "Could not update reminder.",
+      );
     }
   };
 
   const handleDeleteReminder = async (id: string) => {
+    // Server first. Dropping the row before the request meant a rejected or
+    // failed delete still looked like a success until the next poll.
     try {
-      setReminders((prev) => prev.filter((r) => r.id !== id));
       await deleteReminder(id);
+      setReminders((prev) => prev.filter((r) => r.id !== id));
+      setActionError(null);
     } catch (err) {
-      console.error(err);
+      setActionError(
+        err instanceof Error ? err.message : "Could not delete reminder.",
+      );
     }
   };
 
@@ -209,14 +238,50 @@ export default function RemindersScreen({ onBack }: RemindersScreenProps) {
       </Box>
 
       {/* Main Content Area */}
-      <Box sx={{ flexGrow: 1, overflowY: "auto", px: 2, pb: 10, pt: 1 }}>
+      <PullToRefresh onRefresh={handleRefresh} sx={{ px: 2, pb: 10, pt: 1 }}>
+        {actionError && (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, py: 1.5 }}>
+            <Typography sx={{ flex: 1, fontSize: "0.82rem", color: "#D1453B" }}>
+              {actionError}
+            </Typography>
+            <ButtonBase
+              onClick={() => setActionError(null)}
+              sx={{ px: 1.5, py: 0.5, borderRadius: 1, fontSize: "0.82rem", fontWeight: 600, color: "#666666" }}
+            >
+              Dismiss
+            </ButtonBase>
+          </Box>
+        )}
         {reminders.length === 0 ? (
           <Typography color="text.secondary" sx={{ py: 6, textAlign: "center", fontSize: "0.9rem" }}>
             No reminders scheduled. Tap + to set a reminder.
           </Typography>
         ) : (
           reminders.map((r) => (
-            <Card key={r.id} variant="outlined" sx={{ mb: 1.5, borderRadius: 2.5, borderColor: "#EEEEEE" }}>
+            <SwipeableRow
+              key={r.id}
+              background="#FFFFFF"
+              onOpenChange={(isOpen) => setOpenRowId(isOpen ? r.id : null)}
+              forceClosed={openRowId !== null && openRowId !== r.id}
+              actions={[
+                {
+                  id: "complete",
+                  label: r.status === "handled" ? "Reopen" : "Done",
+                  icon: <CheckRoundedIcon sx={{ fontSize: 19 }} />,
+                  color: "#058527",
+                  onPress: () => handleToggleReminderHandled(r),
+                },
+                {
+                  id: "delete",
+                  label: "Delete",
+                  icon: <DeleteOutlineRoundedIcon sx={{ fontSize: 19 }} />,
+                  color: "#D1453B",
+                  destructive: true,
+                  onPress: () => handleDeleteReminder(r.id),
+                },
+              ]}
+            >
+            <Card variant="outlined" sx={{ mb: 1.5, borderRadius: 2.5, borderColor: "#EEEEEE" }}>
               <CardContent sx={{ py: 1.5, px: 2, "&:last-child": { pb: 1.5 } }}>
                 <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <Box>
@@ -250,21 +315,27 @@ export default function RemindersScreen({ onBack }: RemindersScreenProps) {
                     <Button
                       size="small"
                       variant={r.status === "handled" ? "outlined" : "contained"}
+                      aria-label={`${r.status === "handled" ? "Reopen" : "Complete"} reminder: ${r.title}`}
                       onClick={() => void handleToggleReminderHandled(r)}
                       sx={{ textTransform: "none", fontSize: "0.75rem", px: 1.5, py: 0.25 }}
                     >
                       {r.status === "handled" ? "Reopen" : "Done"}
                     </Button>
-                    <IconButton size="small" onClick={() => void handleDeleteReminder(r.id)}>
+                    <IconButton
+                      size="small"
+                      aria-label={`Delete reminder: ${r.title}`}
+                      onClick={() => void handleDeleteReminder(r.id)}
+                    >
                       <DeleteOutlineRoundedIcon sx={{ fontSize: 18, color: "#808080" }} />
                     </IconButton>
                   </Box>
                 </Box>
               </CardContent>
             </Card>
+            </SwipeableRow>
           ))
         )}
-      </Box>
+      </PullToRefresh>
 
       {/* Floating Action Button */}
       <Fab

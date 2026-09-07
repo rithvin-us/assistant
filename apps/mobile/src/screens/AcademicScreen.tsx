@@ -21,6 +21,8 @@ import CircularProgress from "@mui/material/CircularProgress";
 import Chip from "@mui/material/Chip";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 
+import PullToRefresh from "../components/PullToRefresh";
+
 import { fetchAcademicOverview, formatDue, formatSynced } from "../api/academic";
 import type { AcademicOverview } from "../api/types";
 
@@ -63,6 +65,10 @@ export default function AcademicScreen({ onBack, onOpenClassroom }: Props) {
     }
   }, []);
 
+  const handleRefresh = async () => {
+    await load();
+  };
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -98,7 +104,7 @@ export default function AcademicScreen({ onBack, onOpenClassroom }: Props) {
       )}
 
       {overview && (
-        <Box sx={{ flex: 1, overflowY: "auto" }}>
+        <PullToRefresh onRefresh={handleRefresh}>
           <Box sx={{ display: "flex", px: 2, py: 2.5 }}>
             <Stat value={overview.due_this_week} label="due this week" />
             <Stat value={overview.overdue} label="overdue" />
@@ -198,7 +204,7 @@ export default function AcademicScreen({ onBack, onOpenClassroom }: Props) {
               ))}
             </>
           )}
-        </Box>
+        </PullToRefresh>
       )}
     </Box>
   );

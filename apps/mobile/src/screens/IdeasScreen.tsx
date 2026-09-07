@@ -20,12 +20,16 @@ import CardContent from "@mui/material/CardContent";
 import CardActions from "@mui/material/CardActions";
 import IconButton from "@mui/material/IconButton";
 import Fab from "@mui/material/Fab";
+import ButtonBase from "@mui/material/ButtonBase";
 import SearchRoundedIcon from "@mui/icons-material/SearchRounded";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import DeleteOutlineRoundedIcon from "@mui/icons-material/DeleteOutlineRounded";
+import ChecklistRoundedIcon from "@mui/icons-material/ChecklistRounded";
 import TransformRoundedIcon from "@mui/icons-material/TransformRounded";
 import ArrowBackRoundedIcon from "@mui/icons-material/ArrowBackRounded";
 
+import PullToRefresh from "../components/PullToRefresh";
+import SwipeableRow from "../components/SwipeableRow";
 import type { IdeaItem } from "../api/types";
 import {
   fetchIdeas,
@@ -44,6 +48,8 @@ export default function IdeasScreen({ onBack }: IdeasScreenProps) {
   const [ideas, setIdeas] = useState<IdeaItem[]>([]);
   const [ideaStatusFilter, setIdeaStatusFilter] = useState<string>("active");
 
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [openRowId, setOpenRowId] = useState<string | null>(null);
   const [ideaModalOpen, setIdeaModalOpen] = useState(false);
   const [editingIdea, setEditingIdea] = useState<IdeaItem | null>(null);
   const [ideaTitle, setIdeaTitle] = useState("");
@@ -59,6 +65,10 @@ export default function IdeasScreen({ onBack }: IdeasScreenProps) {
     } catch (err) {
       console.warn("Failed to load ideas:", err);
     }
+  };
+
+  const handleRefresh = async () => {
+    await loadData();
   };
 
   useEffect(() => {
@@ -112,27 +122,35 @@ export default function IdeasScreen({ onBack }: IdeasScreenProps) {
       setEditingIdea(null);
       setIdeaTitle("");
       setIdeaDesc("");
+      setActionError(null);
       await loadData();
     } catch (err) {
-      console.error(err);
+      setActionError(err instanceof Error ? err.message : "Could not save idea.");
     }
   };
 
   const handleConvertIdea = async (idea: IdeaItem) => {
+    // Server first: a conversion that failed must not look like it succeeded.
     try {
       await convertIdeaToTask(idea.id);
+      setActionError(null);
       await loadData();
     } catch (err) {
-      console.error(err);
+      setActionError(
+        err instanceof Error ? err.message : "Could not convert idea.",
+      );
     }
   };
 
   const handleDeleteIdea = async (id: string) => {
+    // Server first. Dropping the row before the request meant a rejected or
+    // failed delete still looked like a success until the next poll.
     try {
-      setIdeas((prev) => prev.filter((i) => i.id !== id));
       await deleteIdea(id);
+      setIdeas((prev) => prev.filter((i) => i.id !== id));
+      setActionError(null);
     } catch (err) {
-      console.error(err);
+      setActionError(err instanceof Error ? err.message : "Could not delete idea.");
     }
   };
 
@@ -206,20 +224,60 @@ export default function IdeasScreen({ onBack }: IdeasScreenProps) {
       </Box>
 
       {/* Main Content Area */}
-      <Box sx={{ flexGrow: 1, overflowY: "auto", px: 2, pb: 10, pt: 1 }}>
+      <PullToRefresh onRefresh={handleRefresh} sx={{ px: 2, pb: 10, pt: 1 }}>
+        {actionError && (
+          <Box sx={{ display: "flex", alignItems: "center", gap: 1.5, py: 1.5 }}>
+            <Typography sx={{ flex: 1, fontSize: "0.82rem", color: "#D1453B" }}>
+              {actionError}
+            </Typography>
+            <ButtonBase
+              onClick={() => setActionError(null)}
+              sx={{ px: 1.5, py: 0.5, borderRadius: 1, fontSize: "0.82rem", fontWeight: 600, color: "#666666" }}
+            >
+              Dismiss
+            </ButtonBase>
+          </Box>
+        )}
         {ideas.length === 0 ? (
           <Typography color="text.secondary" sx={{ py: 6, textAlign: "center", fontSize: "0.9rem" }}>
             No ideas captured. Tap + to record an idea.
           </Typography>
         ) : (
           ideas.map((idea) => (
-            <Card key={idea.id} variant="outlined" sx={{ mb: 1.5, borderRadius: 2.5, borderColor: "#EEEEEE" }}>
+            <SwipeableRow
+              key={idea.id}
+              background="#FFFFFF"
+              onOpenChange={(isOpen) => setOpenRowId(isOpen ? idea.id : null)}
+              forceClosed={openRowId !== null && openRowId !== idea.id}
+              actions={[
+                {
+                  id: "convert",
+                  label: "To Task",
+                  icon: <ChecklistRoundedIcon sx={{ fontSize: 19 }} />,
+                  color: "#058527",
+                  onPress: () => handleConvertIdea(idea),
+                },
+                {
+                  id: "delete",
+                  label: "Delete",
+                  icon: <DeleteOutlineRoundedIcon sx={{ fontSize: 19 }} />,
+                  color: "#D1453B",
+                  destructive: true,
+                  onPress: () => handleDeleteIdea(idea.id),
+                },
+              ]}
+            >
+            <Card variant="outlined" sx={{ mb: 1.5, borderRadius: 2.5, borderColor: "#EEEEEE" }}>
               <CardContent sx={{ py: 1.5, px: 2, "&:last-child": { pb: 1 } }}>
                 <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
                   <Typography variant="subtitle1" sx={{ fontWeight: 600, fontSize: "0.95rem" }}>
                     {idea.title}
                   </Typography>
-                  <IconButton size="small" onClick={() => void handleDeleteIdea(idea.id)}>
+                  <IconButton
+                    size="small"
+                    aria-label={`Delete idea: ${idea.title}`}
+                    onClick={() => void handleDeleteIdea(idea.id)}
+                  >
                     <DeleteOutlineRoundedIcon sx={{ fontSize: 18, color: "#808080" }} />
                   </IconButton>
                 </Box>
@@ -234,6 +292,7 @@ export default function IdeasScreen({ onBack }: IdeasScreenProps) {
                   <Button
                     size="small"
                     variant="outlined"
+                    aria-label={`Convert idea to task: ${idea.title}`}
                     startIcon={<TransformRoundedIcon />}
                     onClick={() => void handleConvertIdea(idea)}
                     sx={{ textTransform: "none", fontSize: "0.78rem" }}
@@ -245,9 +304,10 @@ export default function IdeasScreen({ onBack }: IdeasScreenProps) {
                 )}
               </CardActions>
             </Card>
+            </SwipeableRow>
           ))
         )}
-      </Box>
+      </PullToRefresh>
 
       {/* Floating Action Button */}
       <Fab
