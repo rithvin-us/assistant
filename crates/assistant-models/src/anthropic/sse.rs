@@ -205,11 +205,11 @@ impl SseDecoder {
         };
 
         match serde_json::from_str::<Value>(json) {
-            Ok(arguments) => out.push_back(Ok(StreamChunk::ToolCall(assistant_tools::ToolCall {
-                id: block.id,
-                name: block.name,
-                arguments,
-            }))),
+            Ok(arguments) => out.push_back(Ok(StreamChunk::ToolCall(
+                // Anthropic asks for nothing back on the next round, so there is
+                // no provider state to carry.
+                assistant_tools::ToolCall::new(block.id, block.name, arguments),
+            ))),
             Err(error) => out.push_back(Err(ModelError::MalformedResponse(format!(
                 "streamed tool arguments were not valid JSON: {error}"
             )))),

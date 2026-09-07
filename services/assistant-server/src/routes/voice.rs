@@ -241,7 +241,9 @@ async fn synthesize_google_free_tts(
 
     for chunk in chunks {
         let encoded = url::form_urlencoded::byte_serialize(chunk.as_bytes()).collect::<String>();
-        let url = format!("https://translate.google.com/translate_tts?ie=UTF-8&q={encoded}&tl=en&client=tw-ob");
+        let url = format!(
+            "https://translate.google.com/translate_tts?ie=UTF-8&q={encoded}&tl=en&client=tw-ob"
+        );
         let res = http
             .get(&url)
             .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
@@ -268,11 +270,9 @@ fn split_text_chunks(text: &str, max_len: usize) -> Vec<String> {
     let mut current = String::new();
 
     for word in text.split_whitespace() {
-        if current.len() + word.len() + 1 > max_len {
-            if !current.is_empty() {
-                chunks.push(current.clone());
-                current.clear();
-            }
+        if current.len() + word.len() + 1 > max_len && !current.is_empty() {
+            chunks.push(current.clone());
+            current.clear();
         }
         if !current.is_empty() {
             current.push(' ');

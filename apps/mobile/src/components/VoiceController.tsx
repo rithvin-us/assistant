@@ -6,7 +6,7 @@ import StopRoundedIcon from '@mui/icons-material/StopRounded';
 import CircularProgress from '@mui/material/CircularProgress';
 import Chip from '@mui/material/Chip';
 import { VoiceState } from '../api/types';
-import { transcribeVoiceAudio, speakVoiceText, AudioPlaybackController } from '../api/voice';
+import { transcribeVoiceAudio } from '../api/voice';
 
 interface VoiceControllerProps {
   onTranscriptReady: (transcript: string) => void;
@@ -23,7 +23,6 @@ export const VoiceController: React.FC<VoiceControllerProps> = ({
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
-  const playbackControllerRef = useRef<AudioPlaybackController>(new AudioPlaybackController());
 
   const startRecording = async () => {
     setErrorMessage(null);
@@ -51,18 +50,15 @@ export const VoiceController: React.FC<VoiceControllerProps> = ({
           if (res.text && res.text.trim().length > 0) {
             setLiveTranscript(res.text);
             setVoiceState('thinking');
+            // This control's job ends at the transcript. The conversation
+            // sends it through the assistant core like any typed turn, and
+            // renders the answer.
+            //
+            // It used to synthesise the transcript itself and play that back,
+            // so the user heard their own question read out in the assistant's
+            // voice and the assistant's actual answer was never spoken. Speaking
+            // a reply is `useVoiceTurn`'s job, and it speaks the real one.
             onTranscriptReady(res.text);
-
-            // Optional TTS response synthesis
-            try {
-              setVoiceState('speaking');
-              const ttsRes = await speakVoiceText(res.text);
-              if (ttsRes.audio_base64) {
-                await playbackControllerRef.current.playBase64(ttsRes.audio_base64);
-              }
-            } catch {
-              // TTS synthesis error is non-fatal to transcript turn
-            }
           }
           setVoiceState('idle');
         } catch (err: unknown) {
@@ -88,7 +84,6 @@ export const VoiceController: React.FC<VoiceControllerProps> = ({
   };
 
   const handleInterrupt = () => {
-    playbackControllerRef.current.stop();
     if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
     }

@@ -45,20 +45,6 @@ pub async fn transcribe(
         ));
     }
 
-    let api_key = state
-        .openai_api_key
-        .as_deref()
-        .or(state.gemini_api_key.as_deref())
-        .ok_or_else(|| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ApiError {
-                    code: "openai_not_configured".into(),
-                    message: "Neither OPENAI_API_KEY nor GEMINI_API_KEY is configured on the server.".into(),
-                }),
-            )
-        })?;
-
     let content_type = headers
         .get(axum::http::header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
@@ -73,10 +59,40 @@ pub async fn transcribe(
             .unwrap_or(false)
         || state.model.starts_with("gemini");
 
+    // The credential has to match the endpoint the request is about to go to.
+    // This used to prefer `OPENAI_API_KEY` regardless and then send it to
+    // `generativelanguage.googleapis.com`, which Google rejects with
+    // `400 Please pass a valid API key`.
+    let api_key = if is_gemini {
+        state.gemini_api_key.as_deref().ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiError {
+                    code: "transcription_not_configured".into(),
+                    message: "Transcription is routed to Gemini but GEMINI_API_KEY is not configured on the server.".into(),
+                }),
+            )
+        })?
+    } else {
+        state.openai_api_key.as_deref().ok_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiError {
+                    code: "openai_not_configured".into(),
+                    message: "OPENAI_API_KEY is not configured on the server.".into(),
+                }),
+            )
+        })?
+    };
+
     if is_gemini {
         use base64::Engine;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&body);
-        let mime = if content_type.is_empty() { "audio/webm" } else { content_type };
+        let mime = if content_type.is_empty() {
+            "audio/webm"
+        } else {
+            content_type
+        };
 
         let primary_model = if state.openai_transcription_model.starts_with("gemini") {
             state.openai_transcription_model.as_str()
@@ -86,13 +102,22 @@ pub async fn transcribe(
             "gemini-3.6-flash"
         };
 
-        // Try primary model, fallback to gemini-3.6-flash, gemini-2.5-flash, or gemini-2.0-flash on 529/503 server spikes
-        let candidate_models = [primary_model, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
+        // Retry the configured model on a rate limit or a server spike, backing
+        // off between attempts.
+        //
+        // This used to fall back onto `gemini-2.5-flash` and `gemini-2.0-flash`.
+        // Both are now retired and answer `404 ... is no longer available`, and
+        // 404 is not retryable -- so a transient 429 on the configured model was
+        // reported to the user as "this model is no longer available", naming a
+        // model the deployment had not asked for. Backing off on the model that
+        // is actually configured keeps the reported cause the real one.
+        const ATTEMPTS: usize = 3;
         let mut last_error_msg = String::new();
 
-        for (attempt, model_name) in candidate_models.iter().enumerate() {
+        for attempt in 0..ATTEMPTS {
+            let model_name = &primary_model;
             if attempt > 0 {
-                tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                tokio::time::sleep(std::time::Duration::from_millis(400 * attempt as u64)).await;
             }
 
             let payload = serde_json::json!({

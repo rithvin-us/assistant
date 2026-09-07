@@ -299,16 +299,8 @@ async fn tool_results_become_one_user_message_of_tool_result_blocks() {
             Message::assistant_tool_calls(
                 "Checking.",
                 vec![
-                    ToolCall {
-                        id: "toolu_a".into(),
-                        name: "notes.read".into(),
-                        arguments: json!({"limit": 3}),
-                    },
-                    ToolCall {
-                        id: "toolu_b".into(),
-                        name: "tasks.read".into(),
-                        arguments: json!({}),
-                    },
+                    ToolCall::new("toolu_a", "notes.read", json!({"limit": 3})),
+                    ToolCall::new("toolu_b", "tasks.read", json!({})),
                 ],
             ),
             Message::tool_result("toolu_a", r#"{"notes":[]}"#),
@@ -526,11 +518,7 @@ async fn a_transport_failure_is_retried_once_but_never_with_tool_results_attache
             Message::user("send it"),
             Message::assistant_tool_calls(
                 "",
-                vec![ToolCall {
-                    id: "toolu_a".into(),
-                    name: "gmail.send".into(),
-                    arguments: json!({}),
-                }],
+                vec![ToolCall::new("toolu_a", "gmail.send", json!({}))],
             ),
             Message::tool_result("toolu_a", "{\"sent\":true}"),
         ]))

@@ -46,6 +46,11 @@ pub(super) struct WireToolCall {
     pub id: String,
     pub r#type: String,
     pub function: WireFunctionCall,
+    /// Provider-owned state that has to survive the round trip. Gemini puts a
+    /// `thought_signature` here and rejects the next request without it; OpenAI
+    /// omits the field entirely, which is why it is skipped when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extra_content: Option<Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,6 +122,7 @@ pub(super) fn build_request(
                                     name: tc.name.clone(),
                                     arguments: tc.arguments.to_string(),
                                 },
+                                extra_content: tc.provider_metadata.clone(),
                             })
                             .collect(),
                     )
@@ -232,6 +238,7 @@ pub(super) fn parse_response(
                 id: tc.id,
                 name: tc.function.name,
                 arguments: args,
+                provider_metadata: tc.extra_content,
             }
         })
         .collect();
@@ -245,4 +252,107 @@ pub(super) fn parse_response(
         .unwrap_or_default();
 
     Ok((choice.message.content, tool_calls, usage))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{GenerateRequest, Message, ModelId, Role};
+
+    fn config() -> OpenAIConfig {
+        OpenAIConfig::new("test-key")
+    }
+
+    fn request_with(messages: Vec<Message>) -> GenerateRequest {
+        GenerateRequest {
+            model: ModelId("gemini-3.6-flash".into()),
+            system_prompt: None,
+            messages,
+            tools: Vec::new(),
+            max_output_tokens: None,
+            temperature: None,
+        }
+    }
+
+    /// Gemini 3 signs each function call and rejects the follow-up round with
+    /// `400 Function call is missing a thought_signature in functionCall parts`
+    /// unless the signature comes back with it. Dropping it meant no turn that
+    /// used a tool could ever reach a final answer.
+    #[test]
+    fn a_tool_call_carries_its_provider_state_back_to_the_provider() {
+        let signature = serde_json::json!({"google": {"thought_signature": "abc123"}});
+
+        let mut call = ToolCall::new(
+            "call_1",
+            "calendar.list",
+            serde_json::json!({"day": "today"}),
+        );
+        call.provider_metadata = Some(signature.clone());
+
+        let built = build_request(
+            &config(),
+            &request_with(vec![Message {
+                role: Role::Assistant,
+                content: String::new(),
+                tool_calls: vec![call],
+                tool_call_id: None,
+            }]),
+            false,
+        );
+
+        let sent = serde_json::to_value(&built).expect("serialisable");
+        let tool_call = &sent["messages"][0]["tool_calls"][0];
+
+        assert_eq!(tool_call["extra_content"], signature);
+        assert_eq!(tool_call["function"]["name"], "calendar.list");
+    }
+
+    /// OpenAI has no such field, and sending `"extra_content": null` to it is a
+    /// change to a request that was previously correct.
+    #[test]
+    fn a_call_without_provider_state_sends_no_extra_field() {
+        let built = build_request(
+            &config(),
+            &request_with(vec![Message {
+                role: Role::Assistant,
+                content: String::new(),
+                tool_calls: vec![ToolCall::new("call_1", "notes.read", serde_json::json!({}))],
+                tool_call_id: None,
+            }]),
+            false,
+        );
+
+        let sent = serde_json::to_value(&built).expect("serialisable");
+        assert!(
+            sent["messages"][0]["tool_calls"][0]
+                .get("extra_content")
+                .is_none(),
+            "extra_content must be absent, not null"
+        );
+    }
+
+    #[test]
+    fn a_parsed_response_keeps_the_signature_the_provider_sent() {
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": null,
+                    "tool_calls": [{
+                        "id": "call_1",
+                        "type": "function",
+                        "function": { "name": "calendar.list", "arguments": "{}" },
+                        "extra_content": { "google": { "thought_signature": "abc123" } }
+                    }]
+                }
+            }]
+        });
+
+        let (_, calls, _) = parse_response(&response).expect("parses");
+
+        assert_eq!(calls.len(), 1);
+        assert_eq!(
+            calls[0].provider_metadata,
+            Some(serde_json::json!({"google": {"thought_signature": "abc123"}}))
+        );
+    }
 }

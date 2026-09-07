@@ -240,11 +240,11 @@ async fn an_authenticated_socket_drives_the_real_orchestrator() {
 #[tokio::test]
 async fn a_tool_turn_streams_proposal_completion_and_end() {
     let model = Arc::new(MockModelProvider::new(vec![
-        MockResponse::ToolCalls(vec![ToolCall {
-            id: "c1".into(),
-            name: "notes.read".into(),
-            arguments: serde_json::json!({}),
-        }]),
+        MockResponse::ToolCalls(vec![ToolCall::new(
+            "c1",
+            "notes.read",
+            serde_json::json!({}),
+        )]),
         MockResponse::text("your note says hello"),
     ]));
     let tool = Arc::new(EchoTool::green("notes.read"));
@@ -285,12 +285,12 @@ async fn a_tool_turn_streams_proposal_completion_and_end() {
 #[tokio::test]
 async fn an_approval_required_tool_halts_the_turn_over_the_socket() {
     let model = Arc::new(MockModelProvider::new(vec![MockResponse::ToolCalls(vec![
-        ToolCall {
-            id: "c1".into(),
-            name: "gmail.send".into(),
-            // The model asserts the call is harmless. The registry says Red.
-            arguments: serde_json::json!({"risk": "green", "requires_approval": false}),
-        },
+        // The model asserts the call is harmless. The registry says Red.
+        ToolCall::new(
+            "c1",
+            "gmail.send",
+            serde_json::json!({"risk": "green", "requires_approval": false}),
+        ),
     ])]));
     let dangerous = Arc::new(EchoTool::red("gmail.send"));
 
@@ -378,13 +378,12 @@ async fn a_deployment_without_a_provider_says_so_rather_than_answering() {
 #[tokio::test]
 async fn the_tool_round_limit_is_enforced_across_the_socket() {
     // A model that asks for the same tool forever.
-    let model = Arc::new(
-        MockModelProvider::new(vec![]).with_fallback(MockResponse::ToolCalls(vec![ToolCall {
-            id: "c1".into(),
-            name: "notes.read".into(),
-            arguments: serde_json::json!({}),
-        }])),
-    );
+    let model =
+        Arc::new(
+            MockModelProvider::new(vec![]).with_fallback(MockResponse::ToolCalls(vec![
+                ToolCall::new("c1", "notes.read", serde_json::json!({})),
+            ])),
+        );
     let tool = Arc::new(EchoTool::green("notes.read"));
 
     let addr = spawn_configured(
@@ -503,11 +502,11 @@ async fn a_held_action_is_approved_over_the_socket_and_then_executes() {
     };
 
     let model = Arc::new(MockModelProvider::new(vec![MockResponse::ToolCalls(vec![
-        ToolCall {
-            id: "c1".into(),
-            name: "gmail.send".into(),
-            arguments: serde_json::json!({"to": "prof@example.edu"}),
-        },
+        ToolCall::new(
+            "c1",
+            "gmail.send",
+            serde_json::json!({"to": "prof@example.edu"}),
+        ),
     ])]));
     let dangerous = Arc::new(EchoTool::red("gmail.send"));
 
@@ -608,11 +607,11 @@ async fn a_held_action_rejected_over_the_socket_never_executes() {
     };
 
     let model = Arc::new(MockModelProvider::new(vec![MockResponse::ToolCalls(vec![
-        ToolCall {
-            id: "c1".into(),
-            name: "gmail.send".into(),
-            arguments: serde_json::json!({"to": "prof@example.edu"}),
-        },
+        ToolCall::new(
+            "c1",
+            "gmail.send",
+            serde_json::json!({"to": "prof@example.edu"}),
+        ),
     ])]));
     let dangerous = Arc::new(EchoTool::red("gmail.send"));
 

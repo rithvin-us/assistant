@@ -262,14 +262,14 @@ pub(super) fn parse_tool_use(block: &Value) -> Result<ToolCall, ModelError> {
         .and_then(Value::as_str)
         .ok_or_else(|| ModelError::MalformedResponse("tool_use block had no name".into()))?;
 
-    Ok(ToolCall {
-        id: id.to_string(),
-        name: name.to_string(),
-        // Arguments are handed to the core exactly as received. Validation
-        // against the registry's schema happens there, against the
-        // authoritative spec -- not here, against what the model claimed.
-        arguments: block.get("input").cloned().unwrap_or(Value::Null),
-    })
+    // Arguments are handed to the core exactly as received. Validation against
+    // the registry's schema happens there, against the authoritative spec --
+    // not here, against what the model claimed.
+    Ok(ToolCall::new(
+        id.to_string(),
+        name.to_string(),
+        block.get("input").cloned().unwrap_or(Value::Null),
+    ))
 }
 
 pub(super) fn parse_usage(usage: Option<&Value>) -> Usage {

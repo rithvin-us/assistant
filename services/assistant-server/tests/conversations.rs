@@ -171,11 +171,8 @@ async fn every_role_round_trips_including_its_structured_tool_data() {
     let turn = Uuid::new_v4();
     store.ensure(id, owner).await.expect("created");
 
-    let call = assistant_tools::ToolCall {
-        id: "toolu_1".into(),
-        name: "notes.read".into(),
-        arguments: serde_json::json!({"limit": 5}),
-    };
+    let call =
+        assistant_tools::ToolCall::new("toolu_1", "notes.read", serde_json::json!({"limit": 5}));
 
     store
         .append(&NewMessage::user(id, owner, turn, "read my notes"))
@@ -302,11 +299,11 @@ async fn the_database_refuses_a_user_message_that_carries_tool_calls() {
     // A user-supplied tool call is the shape an injection attempt would take,
     // so the constraint is in the schema rather than only in Rust.
     let mut message = NewMessage::user(id, owner, Uuid::new_v4(), "please");
-    message.tool_calls = vec![assistant_tools::ToolCall {
-        id: "toolu_x".into(),
-        name: "gmail.send".into(),
-        arguments: serde_json::json!({}),
-    }];
+    message.tool_calls = vec![assistant_tools::ToolCall::new(
+        "toolu_x",
+        "gmail.send",
+        serde_json::json!({}),
+    )];
 
     assert!(
         store.append(&message).await.is_err(),

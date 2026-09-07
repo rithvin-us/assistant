@@ -60,6 +60,40 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    /// Opaque state the provider attached to this call and demands back on the
+    /// next round.
+    ///
+    /// Gemini 3 returns a `thought_signature` alongside every function call and
+    /// rejects the follow-up request with `400 Function call is missing a
+    /// thought_signature in functionCall parts` unless it is echoed verbatim, so
+    /// a turn that called a tool could never produce a final answer.
+    ///
+    /// These are provider-owned bytes and are treated as such: nothing reads
+    /// them, they are never matched, logged or persisted in an audit record, and
+    /// the only place they go is back to the provider that issued them. In
+    /// particular they are not an input to anything that decides what may run:
+    /// the permission policy sees a [`ToolSpec`] and a principal, and this field
+    /// is on neither.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_metadata: Option<serde_json::Value>,
+}
+
+impl ToolCall {
+    /// A call with no provider state attached: what the orchestrator and the
+    /// approval-resume path construct, and what every provider without a
+    /// round-trip requirement emits.
+    pub fn new(
+        id: impl Into<String>,
+        name: impl Into<String>,
+        arguments: serde_json::Value,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            name: name.into(),
+            arguments,
+            provider_metadata: None,
+        }
+    }
 }
 
 /// Result of executing a tool.

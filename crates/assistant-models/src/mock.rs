@@ -43,21 +43,17 @@ impl MockResponse {
 
     /// A single tool call with the given name and arguments.
     pub fn tool_call(id: &str, name: &str, arguments: serde_json::Value) -> Self {
-        Self::ToolCalls(vec![ToolCall {
-            id: id.to_string(),
-            name: name.to_string(),
-            arguments,
-        }])
+        Self::ToolCalls(vec![ToolCall::new(id, name, arguments)])
     }
 
     /// A call whose arguments are not a JSON object, which the core must reject
     /// before the tool is ever reached.
     pub fn malformed_tool_call(id: &str, name: &str) -> Self {
-        Self::ToolCalls(vec![ToolCall {
-            id: id.to_string(),
-            name: name.to_string(),
-            arguments: serde_json::json!("this is not an argument object"),
-        }])
+        Self::ToolCalls(vec![ToolCall::new(
+            id,
+            name,
+            serde_json::json!("this is not an argument object"),
+        )])
     }
 }
 
@@ -276,16 +272,8 @@ mod tests {
     #[tokio::test]
     async fn multiple_tool_calls_are_returned_together() {
         let provider = MockModelProvider::new(vec![MockResponse::ToolCalls(vec![
-            ToolCall {
-                id: "a".into(),
-                name: "notes.read".into(),
-                arguments: serde_json::json!({}),
-            },
-            ToolCall {
-                id: "b".into(),
-                name: "tasks.read".into(),
-                arguments: serde_json::json!({}),
-            },
+            ToolCall::new("a", "notes.read", serde_json::json!({})),
+            ToolCall::new("b", "tasks.read", serde_json::json!({})),
         ])]);
 
         let response = provider.generate(request()).await.expect("ok");

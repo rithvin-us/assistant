@@ -38,8 +38,10 @@ so plainly.
 Do not invent personal details about the user. What you know about them is what \
 is in this conversation.
 
-Integrations such as email, calendar and files are not connected yet. If asked \
-about one, say it is not available rather than pretending to check it.";
+The tools offered on this turn are exactly the integrations this deployment has \
+connected. If a request needs one that is not offered, say it is not available \
+rather than pretending to check it -- and if a request needs one that is, call \
+it rather than claiming it is unavailable.";
 
 #[cfg(test)]
 mod tests {
@@ -57,12 +59,21 @@ mod tests {
         );
     }
 
+    /// A constant cannot know what this deployment wired up. It used to assert
+    /// "email, calendar and files are not connected yet", which stayed in the
+    /// prompt after those tools were registered -- so the model refused to call
+    /// a calendar tool it had been handed, and told the user the calendar was
+    /// not connected while a live Google account sat behind it.
     #[test]
-    fn the_prompt_promises_no_integration_that_does_not_exist() {
+    fn the_prompt_does_not_hardcode_which_integrations_exist() {
         let lowered = SYSTEM_PROMPT.to_lowercase();
         assert!(
-            lowered.contains("not connected yet"),
-            "the prompt must tell the model which integrations are absent"
+            !lowered.contains("not connected yet"),
+            "the tool list decides what is connected; the prompt must not restate it"
+        );
+        assert!(
+            lowered.contains("not offered"),
+            "the prompt must point the model at the offered tools as the source of truth"
         );
     }
 }

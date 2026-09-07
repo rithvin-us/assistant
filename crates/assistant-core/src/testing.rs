@@ -34,11 +34,7 @@ pub fn principal_with(scopes: &[&str]) -> Principal {
 
 /// A tool call as a model would propose it.
 pub fn call(name: &str, arguments: serde_json::Value) -> ToolCall {
-    ToolCall {
-        id: format!("call_{name}"),
-        name: name.to_string(),
-        arguments,
-    }
+    ToolCall::new(format!("call_{name}"), name, arguments)
 }
 
 /// A `ToolSpec` with the given name, risk and required scopes.

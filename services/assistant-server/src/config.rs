@@ -8,6 +8,10 @@ use std::{fmt, net::SocketAddr, path::PathBuf, time::Duration};
 
 use assistant_models::openai::OpenAIConfig;
 
+/// Google's OpenAI-compatible chat endpoint. Named once so the completions path
+/// and the transcription path cannot drift apart on which host they mean.
+pub const GEMINI_OPENAI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
+
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
     #[error("required environment variable {0} is not set")]
@@ -199,18 +203,44 @@ impl Config {
         *b"dev_credential_key_32_bytes_ok!!"
     }
 
+    /// True when this deployment talks to Google's OpenAI-compatible endpoint
+    /// rather than OpenAI's own.
+    ///
+    /// An explicit `OPENAI_BASE_URL` is the operator's choice and wins; failing
+    /// that, a Gemini credential or a `gemini-*` model name selects Google.
+    pub fn targets_gemini(&self) -> bool {
+        match self.openai_base_url.as_deref() {
+            Some(url) => url.contains("generativelanguage.googleapis.com"),
+            None => self.gemini_api_key.is_some() || self.model.starts_with("gemini"),
+        }
+    }
+
     /// Builds the provider configuration, when this deployment has a credential.
+    ///
+    /// The credential and the endpoint are chosen together. They used to be
+    /// chosen independently -- the key preferred `OPENAI_API_KEY` while the base
+    /// URL was switched to Google whenever a Gemini key or model was present --
+    /// so a deployment holding both keys sent the OpenAI credential to Google
+    /// and every turn failed with `provider_invalid_request` /
+    /// `400 Please pass a valid API key`.
     pub fn openai(&self) -> Option<OpenAIConfig> {
-        let key = self
-            .openai_api_key
-            .as_ref()
-            .or(self.gemini_api_key.as_ref())?;
+        let targets_gemini = self.targets_gemini();
+
+        // Google's endpoint only accepts a Google credential, and OpenAI's only
+        // accepts an OpenAI one. Neither is a usable fallback for the other, so
+        // a missing key here is no provider at all rather than a call that is
+        // certain to be rejected.
+        let key = if targets_gemini {
+            self.gemini_api_key.as_ref()?
+        } else {
+            self.openai_api_key.as_ref()?
+        };
+
         let mut cfg = OpenAIConfig::new(key);
         if let Some(ref base_url) = self.openai_base_url {
             cfg.base_url = base_url.clone();
-        } else if self.gemini_api_key.is_some() || self.model.starts_with("gemini") {
-            cfg.base_url =
-                "https://generativelanguage.googleapis.com/v1beta/openai".to_string();
+        } else if targets_gemini {
+            cfg.base_url = GEMINI_OPENAI_BASE_URL.to_string();
         }
         cfg.model = self.model.clone();
         cfg.max_output_tokens = self.model_max_output_tokens;

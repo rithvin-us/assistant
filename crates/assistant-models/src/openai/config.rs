@@ -14,7 +14,8 @@ pub struct OpenAIConfig {
 }
 
 impl OpenAIConfig {
-    pub const DEFAULT_BASE_URL: &'static str = "https://generativelanguage.googleapis.com/v1beta/openai";
+    pub const DEFAULT_BASE_URL: &'static str =
+        "https://generativelanguage.googleapis.com/v1beta/openai";
     pub const DEFAULT_MODEL: &'static str = "gemini-3.6-flash";
     pub const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 4096;
     pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
@@ -97,4 +98,3 @@ mod tests {
         );
     }
 }
-

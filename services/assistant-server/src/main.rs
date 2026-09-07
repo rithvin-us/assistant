@@ -93,7 +93,18 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         None => {
-            tracing::warn!("OPENAI_API_KEY is not set; running without a model provider");
+            // Which credential is missing depends on which endpoint this
+            // deployment targets, and naming the wrong one sends the operator
+            // looking for a key that would be rejected anyway.
+            if config.targets_gemini() {
+                tracing::warn!(
+                    model = %config.model,
+                    "this deployment targets Google's endpoint but GEMINI_API_KEY is not set; \
+                     running without a model provider"
+                );
+            } else {
+                tracing::warn!("OPENAI_API_KEY is not set; running without a model provider");
+            }
             None
         }
     };

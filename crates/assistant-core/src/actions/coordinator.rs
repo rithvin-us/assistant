@@ -205,11 +205,14 @@ impl ApprovalCoordinator {
         // Re-validate. The approval said "yes to this action"; it did not freeze
         // the world. Between the question and the answer the tool may have been
         // unregistered, blocklisted, or the user may have lost a scope.
-        let call = ToolCall {
-            id: execution.id.to_string(),
-            name: execution.tool_name.clone(),
-            arguments: execution.arguments.clone(),
-        };
+        // Built from the persisted record, not from anything a model said, so
+        // it carries no provider state -- the resumed call is never fed back to
+        // a model round that would need it echoed.
+        let call = ToolCall::new(
+            execution.id.to_string(),
+            execution.tool_name.clone(),
+            execution.arguments.clone(),
+        );
 
         let spec = match self.executor.resolve(&call) {
             Ok(spec) => spec,

@@ -14,6 +14,9 @@ struct PartialToolCall {
     id: String,
     name: String,
     arguments: String,
+    /// Provider state carried on the delta. Gemini attaches a
+    /// `thought_signature` here and refuses the follow-up round without it.
+    extra_content: Option<Value>,
 }
 
 #[derive(Default)]
@@ -56,6 +59,8 @@ struct ChunkToolCall {
     id: Option<String>,
     #[serde(default)]
     function: Option<ChunkFunction>,
+    #[serde(default)]
+    extra_content: Option<Value>,
 }
 
 #[derive(Deserialize)]
@@ -152,6 +157,9 @@ impl SseDecoder {
                     if let Some(id) = tc.id {
                         entry.id = id;
                     }
+                    if tc.extra_content.is_some() {
+                        entry.extra_content = tc.extra_content;
+                    }
                     if let Some(f) = tc.function {
                         if let Some(name) = f.name {
                             entry.name = name;
@@ -184,6 +192,7 @@ impl SseDecoder {
                     id: tc.id,
                     name: tc.name,
                     arguments: args,
+                    provider_metadata: tc.extra_content,
                 })));
             }
         }

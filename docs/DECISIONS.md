@@ -1597,3 +1597,80 @@ same trait is the intended production backend and is not implemented in
 M8; the migration path is a new impl of `DocumentStorage` plus a
 `document_storage_backend` config value. No schema change is needed for that
 migration because the storage_key is opaque to Postgres.
+
+## ADR-0037 — The model credential is chosen with the endpoint, and provider round-trip state is carried opaquely
+
+**Decision.** Three changes, all on the model-provider seam:
+
+1. `Config::openai()` picks the API key *and* the base URL together. If the
+   deployment targets Google's OpenAI-compatible endpoint it uses
+   `GEMINI_API_KEY`; otherwise it uses `OPENAI_API_KEY`. Neither key is a
+   fallback for the other, and a missing key means no provider rather than a
+   call that is certain to be rejected. `Config::targets_gemini()` is the single
+   predicate; `routes::transcribe` uses the same rule.
+2. `assistant_tools::ToolCall` gains
+   `provider_metadata: Option<serde_json::Value>` — opaque state the provider
+   attached to a call and requires back on the next round. The OpenAI provider
+   reads it from `tool_calls[].extra_content` (streaming and non-streaming) and
+   echoes it verbatim on the follow-up request. `ToolCall::new` constructs a
+   call without it, which is what the orchestrator and the approval-resume path
+   do.
+3. The system prompt no longer asserts which integrations exist. The tool list
+   sent with the turn is the source of truth.
+
+**Context.** No voice or text turn that needed a tool could complete. Three
+faults in series, each masking the next:
+
+* The key and the base URL were chosen from different sources: the key preferred
+  `OPENAI_API_KEY`, while the base URL was switched to
+  `generativelanguage.googleapis.com` whenever a Gemini key or a `gemini-*`
+  model was configured. A deployment holding both keys sent an OpenAI `sk-`
+  credential to Google, which answered
+  `400 Please pass a valid API key` — surfaced as `provider_invalid_request`.
+* With the right key, the model refused to call the calendar tool it had been
+  handed, because the system prompt still said "Integrations such as email,
+  calendar and files are not connected yet". That sentence was true when it was
+  written and has been false since the Google tools were registered in M6. A
+  constant cannot know what a deployment wired up.
+* With the right key and an honest prompt, the first tool round succeeded and
+  the second model call failed:
+  `400 Function call is missing a thought_signature in functionCall parts`.
+  Gemini 3 returns a signed blob with each function call and rejects the
+  follow-up round unless it is echoed. The provider was dropping it.
+
+**Options.**
+
+* *Key/endpoint*: (a) keep the `or` fallback and document it; (b) pair them.
+  (a) leaves a configuration that is silently guaranteed to fail.
+* *Prompt*: (a) rebuild the prompt at startup from the registry; (b) stop
+  claiming anything about integrations and point at the tool list. (a) makes the
+  prompt a runtime value the tests cannot pin, for no gain — the model already
+  receives the tool list.
+* *Signature*: (a) pin a model that does not require it; (b) drop to
+  non-streaming; (c) carry the blob. (a) is a countdown — `gemini-2.5-flash`
+  already returns 404 for new users and `gemini-2.0-flash` is retired. (b) was
+  measured and fails identically: the requirement is the echo, not the
+  transport.
+
+**Chosen approach.** Pair the credential with the endpoint; ground the prompt in
+the tool list; carry the blob.
+
+**Reason.** Each fault was a case of one half of a pair being changed without
+the other. The credential belongs to the endpoint. The claim about integrations
+belongs to the registry. The provider's round-trip state belongs to the call it
+came from.
+
+**Consequences.**
+
+* A deployment that sets `ASSISTANT_MODEL=gemini-*` without `GEMINI_API_KEY`
+  now runs with no model provider and says so at startup, instead of failing
+  every turn at the provider.
+* `provider_metadata` widens `ToolCall`, which is a shared type. It does not
+  widen the permission seam: `PermissionPolicy::evaluate` takes a `ToolSpec` and
+  a `Principal`, and the field is on neither. It is never read, never matched
+  against, never written to an audit record, and goes nowhere except back to the
+  provider that issued it. ADR-0005 is unaffected.
+* Anthropic sets it to `None`; the field is skipped on the wire when absent, so
+  an OpenAI request is byte-identical to what it was before.
+* Retired model ids remain an operational hazard: `gemini-2.0-flash` and
+  `gemini-2.5-flash` both now 404. The model id stays configuration, not code.
