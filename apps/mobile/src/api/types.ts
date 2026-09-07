@@ -521,3 +521,128 @@ export interface DocumentSearchHit {
   snippet: string;
   score: number;
 }
+
+// ---------------------------------------------------------------------------
+// Milestone 9 -- unified personal planning
+// ---------------------------------------------------------------------------
+
+export type ItemSource =
+  | "standalone_task"
+  | "google_classroom"
+  | "google_calendar"
+  | "gmail"
+  | "document_deadline"
+  | "memory_context"
+  | "project_task";
+
+export type DeadlineKind = "hard" | "soft";
+export type DeadlinePrecision = "exact_date_time" | "date_only" | "partial_date";
+
+export interface Deadline {
+  due_at: string;
+  kind: DeadlineKind;
+  precision: DeadlinePrecision;
+  provenance: string;
+  confidence?: number | null;
+}
+
+export type EffortEstimate =
+  | { type: "known"; minutes: number }
+  | { type: "unknown" };
+
+export type PlanningPriority = "low" | "medium" | "high" | "urgent";
+
+export interface PlanningItem {
+  id: string;
+  user_id: string;
+  title: string;
+  description?: string | null;
+  source: ItemSource;
+  source_ref?: string | null;
+  priority: PlanningPriority;
+  deadline?: Deadline | null;
+  effort: EffortEstimate;
+  project_id?: string | null;
+  project_name?: string | null;
+  is_completed: boolean;
+  dependencies: string[];
+}
+
+export interface Commitment {
+  id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  is_all_day: boolean;
+  location?: string | null;
+  source: ItemSource;
+}
+
+export interface AvailabilityWindow {
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  is_usable: boolean;
+  source: string;
+}
+
+export interface PlanBlock {
+  item_id: string;
+  title: string;
+  start_time: string;
+  end_time: string;
+  duration_minutes: number;
+  rationale: string;
+  confidence: number;
+  source: ItemSource;
+}
+
+export type ConflictType =
+  | "overlapping_commitments"
+  | "insufficient_time_before_deadline"
+  | "hard_deadlines_competing"
+  | "dependency_blocked"
+  | "scheduled_past_deadline";
+
+export type ConflictSeverity = "warning" | "critical";
+
+export interface Conflict {
+  conflict_type: ConflictType;
+  severity: ConflictSeverity;
+  affected_item_ids: string[];
+  reason: string;
+}
+
+export type FeasibilityState =
+  | "feasible"
+  | "likely_feasible"
+  | "uncertain"
+  | "infeasible";
+
+export interface FeasibilityResult {
+  state: FeasibilityState;
+  total_known_effort_minutes: number;
+  total_available_minutes: number;
+  unknown_effort_count: number;
+  conflicts: Conflict[];
+  explanation: string;
+}
+
+export interface TodayPlan {
+  date: string;
+  commitments: Commitment[];
+  recommended_blocks: PlanBlock[];
+  upcoming_deadlines: Deadline[];
+  total_available_minutes: number;
+  conflicts: Conflict[];
+  feasibility: FeasibilityResult;
+}
+
+export interface UpcomingPlanning {
+  horizon_days: number;
+  total_items: number;
+  deadlines: PlanningItem[];
+  daily_workload_minutes: [string, number][];
+  conflicts: Conflict[];
+  feasibility: FeasibilityResult;
+}
