@@ -136,6 +136,26 @@ stopped on unmount, so a reply kept talking over whatever the user switched to.
 it interrupted. It used to only pause the element, so an awaited `playBase64`
 that got barged in on never resolved and its caller's `finally` never ran.
 
+## Approvals
+
+Voice cannot approve anything. A turn that reaches a tool requiring approval
+stops at the policy exactly as the text path does — nothing runs — and the voice
+layer now names the pending action and sends the user to the existing approval
+UI. Previously `approval_required` frames were ignored, so the turn returned no
+answer and fell silent, indistinguishable from being ignored.
+
+This is deliberate: "yes" is far too easy to say by accident, and far too easy
+to mishear, for an action that sends mail or changes a calendar. There is no
+spoken consent path, and the existing approval mechanism remains the only way to
+authorise a held action.
+
+## Conversation continuity
+
+Voice turns share one conversation for the life of the screen, so a follow-up
+carries the previous turns' context. Each turn previously minted a fresh
+conversation id, so "which one is due first?" arrived with no history and could
+not be answered. `resetConversation()` starts a new one deliberately.
+
 ## Measured latency
 
 From the live Cartesia round trip (`cargo test -p assistant-voice --test
@@ -189,8 +209,11 @@ policy, approval requirements and tool executor apply.
   endpoints. Nothing pretends to stream.
 - **Haptics remain inert** (see `docs/M11-INTERACTION.md`).
 - **Providers are constructed per request** rather than reused.
-- **No rate limiting.** Size limits bound a single request; nothing bounds the
-  number of requests. Deferred to M13 with the rest of the abuse surface.
+- **Rate limiting is per-instance.** A fixed-window limiter (30 calls per
+  principal per minute, per endpoint) lives in process memory, so it becomes
+  per-instance if the server is ever replicated. Adequate to stop a runaway
+  client; not a distributed quota. A shared limiter belongs with the rest of the
+  M13 abuse surface.
 - **The unused WebSocket voice path is still present.** It is now correct, but
   it is dead weight until either the client adopts it or it is removed.
 - **`sample_rate` is hardcoded** to 24000 on the server regardless of the
