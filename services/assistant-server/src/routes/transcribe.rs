@@ -83,11 +83,11 @@ pub async fn transcribe(
         } else if state.model.starts_with("gemini") {
             state.model.as_str()
         } else {
-            "gemini-2.5-flash"
+            "gemini-3.6-flash"
         };
 
-        // Try primary model, fallback to gemini-2.0-flash or gemini-1.5-flash on 529/503 server spikes
-        let candidate_models = [primary_model, "gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+        // Try primary model, fallback to gemini-3.6-flash, gemini-2.5-flash, or gemini-2.0-flash on 529/503 server spikes
+        let candidate_models = [primary_model, "gemini-3.6-flash", "gemini-2.5-flash", "gemini-2.0-flash"];
         let mut last_error_msg = String::new();
 
         for (attempt, model_name) in candidate_models.iter().enumerate() {
