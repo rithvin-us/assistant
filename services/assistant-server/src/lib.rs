@@ -9,6 +9,7 @@ pub mod config;
 pub mod conversations;
 pub mod crypto;
 pub mod db;
+pub mod documents_store;
 pub mod error;
 pub mod google;
 pub mod memory_store;
@@ -79,6 +80,26 @@ pub fn app(
         store
     });
 
+    // M8: document pipeline. Present whenever a database is; the object store
+    // defaults to the local filesystem, and the OCR/vision providers default
+    // to null (record-and-move-on) implementations, which is honest for a
+    // deployment that has neither. See ADR-0036.
+    let documents = db.as_ref().map(|pool| {
+        let store: Arc<dyn assistant_documents::DocumentStore> = Arc::new(
+            crate::documents_store::PostgresDocumentStore::new(pool.clone()),
+        );
+        let storage: Arc<dyn assistant_documents::DocumentStorage> =
+            Arc::new(crate::documents_store::LocalFilesystemStorage::new(
+                config.document_storage_dir.clone(),
+            ));
+        assistant_documents::pipeline::Pipeline {
+            store,
+            storage,
+            ocr: Arc::new(assistant_documents::NullOcrProvider),
+            vision: Arc::new(assistant_documents::NullVisionProvider),
+        }
+    });
+
     let state = Arc::new(AppState {
         verifier,
         events,
@@ -86,6 +107,7 @@ pub fn app(
         approvals,
         db,
         memory,
+        documents,
         http,
         openai_api_key: config.openai_api_key.clone(),
         openai_transcription_model: config.openai_transcription_model.clone(),

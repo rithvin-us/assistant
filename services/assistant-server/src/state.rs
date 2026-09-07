@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use assistant_auth::TokenVerifier;
 use assistant_core::{EventBus, Orchestrator, actions::ApprovalCoordinator};
+use assistant_documents::pipeline::Pipeline as DocumentPipeline;
 use assistant_memory::MemoryStore;
 use sqlx::PgPool;
 
@@ -26,6 +27,9 @@ pub struct AppState {
     pub db: Option<PgPool>,
     /// Long-term memory store. `None` when there is no database.
     pub memory: Option<Arc<dyn MemoryStore>>,
+    /// M8 document pipeline (store + storage + OCR/vision providers). `None`
+    /// when there is no database.
+    pub documents: Option<DocumentPipeline>,
     pub http: reqwest::Client,
     pub openai_api_key: Option<String>,
     pub openai_transcription_model: String,

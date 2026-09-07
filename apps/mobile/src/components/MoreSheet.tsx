@@ -22,6 +22,7 @@ import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
 import FolderOutlinedIcon from "@mui/icons-material/FolderOutlined";
 import AutoStoriesOutlinedIcon from "@mui/icons-material/AutoStoriesOutlined";
 import InsightsRoundedIcon from "@mui/icons-material/InsightsRounded";
+import CloudDoneOutlinedIcon from "@mui/icons-material/CloudDoneOutlined";
 
 import type { ConnectionState } from "../api/bridge";
 import type { ScreenType } from "../App";
@@ -44,6 +45,13 @@ export default function MoreSheet({
       note: "Preferences, facts & commitments the assistant remembers",
       enabled: true,
       screen: "memory" as ScreenType,
+    },
+    {
+      icon: <CloudDoneOutlinedIcon sx={{ color: "#2563EB" }} />,
+      label: "Documents",
+      note: "Upload, search and read PDFs and text files",
+      enabled: true,
+      screen: "documents" as ScreenType,
     },
     {
       icon: <AutoStoriesOutlinedIcon sx={{ color: "#7C3AED" }} />,
