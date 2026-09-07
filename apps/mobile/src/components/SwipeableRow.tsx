@@ -27,6 +27,8 @@ import Typography from "@mui/material/Typography";
 
 import { haptic } from "../lib/haptics";
 import { MOTION } from "../lib/motion";
+import { OPEN_THRESHOLD, clampOffset, resolveAxis, settleOpen } from "../lib/gesture";
+import type { Axis } from "../lib/gesture";
 
 /** One revealed action. `destructive` only changes affordance, never behaviour. */
 export interface SwipeAction {
@@ -56,15 +58,6 @@ interface SwipeableRowProps {
   /** Parent-driven close, used to enforce single-open-row behaviour. */
   forceClosed?: boolean;
 }
-
-/** Movement, in px, before the gesture commits to an axis. */
-const AXIS_LOCK_SLOP = 8;
-/** Fraction of the tray that must be uncovered for the row to snap open. */
-const OPEN_THRESHOLD = 0.4;
-/** px/ms past which a flick opens or closes regardless of distance. */
-const FLING_VELOCITY = 0.45;
-
-type Axis = "undecided" | "horizontal" | "vertical";
 
 export default function SwipeableRow({
   children,
@@ -134,10 +127,9 @@ export default function SwipeableRow({
     const dy = e.clientY - startY.current;
 
     if (axis.current === "undecided") {
-      if (Math.abs(dx) < AXIS_LOCK_SLOP && Math.abs(dy) < AXIS_LOCK_SLOP) return;
-      // Vertical wins ties: scrolling is the more common intent, and stealing
-      // it is far worse than a missed swipe.
-      axis.current = Math.abs(dx) > Math.abs(dy) ? "horizontal" : "vertical";
+      const resolved = resolveAxis(dx, dy);
+      if (resolved === "undecided") return;
+      axis.current = resolved;
       if (axis.current === "vertical") {
         setDragging(false);
         return;
@@ -155,17 +147,7 @@ export default function SwipeableRow({
       lastT.current = e.timeStamp;
     }
 
-    // Clamp: closed at 0, open at -trayWidth. Rubber-band the overshoot so the
-    // row reads as bounded rather than broken.
-    const raw = startOffset.current + dx;
-    let next: number;
-    if (raw > 0) {
-      next = raw * 0.25;
-    } else if (raw < -trayWidth) {
-      next = -trayWidth + (raw + trayWidth) * 0.25;
-    } else {
-      next = raw;
-    }
+    const next = clampOffset(startOffset.current + dx, trayWidth);
     setOffset(next);
 
     const crossed = next <= -trayWidth * OPEN_THRESHOLD;
@@ -181,10 +163,7 @@ export default function SwipeableRow({
     setDragging(false);
     if (axis.current !== "horizontal") return;
 
-    // A decisive flick beats position; otherwise use how far the tray is open.
-    if (velocity.current < -FLING_VELOCITY) return open();
-    if (velocity.current > FLING_VELOCITY) return close();
-    if (offset <= -trayWidth * OPEN_THRESHOLD) return open();
+    if (settleOpen(offset, velocity.current, trayWidth)) return open();
     close();
   };
 

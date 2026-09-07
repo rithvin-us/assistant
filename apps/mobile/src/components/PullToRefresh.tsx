@@ -22,6 +22,7 @@ import CircularProgress from "@mui/material/CircularProgress";
 
 import { haptic } from "../lib/haptics";
 import { MOTION, prefersReducedMotion } from "../lib/motion";
+import { pullDistance, shouldArmPull } from "../lib/gesture";
 
 interface PullToRefreshProps {
   children: ReactNode;
@@ -37,9 +38,6 @@ interface PullToRefreshProps {
 const TRIGGER_DISTANCE = 64;
 /** Hard cap on how far the indicator travels, independent of drag length. */
 const MAX_PULL = 96;
-/** Movement before the gesture commits to the vertical axis. */
-const AXIS_LOCK_SLOP = 6;
-
 export default function PullToRefresh({
   children,
   onRefresh,
@@ -75,17 +73,16 @@ export default function PullToRefresh({
     const dx = e.clientX - startX.current;
 
     if (!active.current) {
-      if (Math.abs(dy) < AXIS_LOCK_SLOP && Math.abs(dx) < AXIS_LOCK_SLOP) return;
-      // A downward drag that is mostly vertical, starting at scrollTop 0.
-      if (dy <= 0 || Math.abs(dx) > Math.abs(dy)) {
-        setDragging(false);
+      const scrollTop = scroller.current?.scrollTop ?? 0;
+      if (!shouldArmPull(scrollTop, dx, dy)) {
+        // Not ours: either still inside the slop radius, or an ordinary scroll.
+        if (Math.abs(dy) >= 6 || Math.abs(dx) >= 6) setDragging(false);
         return;
       }
       active.current = true;
     }
 
-    // Resistance: the indicator should feel attached to the list, not free.
-    const next = Math.min(MAX_PULL, dy * 0.5);
+    const next = pullDistance(dy, MAX_PULL);
     setPull(next);
 
     const crossed = next >= TRIGGER_DISTANCE;
