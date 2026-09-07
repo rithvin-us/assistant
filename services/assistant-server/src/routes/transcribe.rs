@@ -65,11 +65,13 @@ pub async fn transcribe(
         .unwrap_or("audio/webm");
 
     let is_gemini = state.gemini_api_key.is_some()
+        || state.openai_api_key.is_none()
         || state
             .openai_base_url
             .as_deref()
             .map(|u| u.contains("generativelanguage.googleapis.com"))
-            .unwrap_or(false);
+            .unwrap_or(false)
+        || state.model.starts_with("gemini");
 
     if is_gemini {
         use base64::Engine;
@@ -78,12 +80,14 @@ pub async fn transcribe(
 
         let primary_model = if state.openai_transcription_model.starts_with("gemini") {
             state.openai_transcription_model.as_str()
+        } else if state.model.starts_with("gemini") {
+            state.model.as_str()
         } else {
-            "gemini-2.5-flash"
+            "gemini-flash-latest"
         };
 
-        // Try primary model, fallback to gemini-3.5-flash or gemini-flash-latest on 529/503 server spikes (100% Free Tier models)
-        let candidate_models = [primary_model, "gemini-3.5-flash", "gemini-flash-latest"];
+        // Try configured primary Gemini model, fallback to gemini-flash-latest or gemini-2.5-flash on 529/503 server spikes
+        let candidate_models = [primary_model, "gemini-flash-latest", "gemini-2.5-flash"];
         let mut last_error_msg = String::new();
 
         for (attempt, model_name) in candidate_models.iter().enumerate() {

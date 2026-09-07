@@ -14,8 +14,8 @@ pub struct OpenAIConfig {
 }
 
 impl OpenAIConfig {
-    pub const DEFAULT_BASE_URL: &'static str = "https://api.openai.com";
-    pub const DEFAULT_MODEL: &'static str = "gpt-4o-mini";
+    pub const DEFAULT_BASE_URL: &'static str = "https://generativelanguage.googleapis.com/v1beta/openai";
+    pub const DEFAULT_MODEL: &'static str = "gemini-flash-latest";
     pub const DEFAULT_MAX_OUTPUT_TOKENS: u32 = 4096;
     pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(60);
     pub const DEFAULT_MAX_TRANSPORT_RETRIES: u32 = 2;
@@ -73,7 +73,7 @@ mod tests {
         let cfg = OpenAIConfig::new("test-key");
         assert_eq!(
             cfg.chat_completions_url(),
-            "https://api.openai.com/v1/chat/completions"
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
         );
     }
 
