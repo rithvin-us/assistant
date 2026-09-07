@@ -7,10 +7,12 @@
 use std::sync::Arc;
 
 use assistant_core::{
-    AssistantStatusHandler, ContextWindow, DeterministicRouter, EventBus, Orchestrator,
-    OrchestratorConfig, RiskBasedPolicy, StoredContextProvider, ToolRegistry,
+    AssistantStatusHandler, ContextWindow, DeterministicRouter, EmptyContextProvider, EventBus,
+    MemoryContextProvider, Orchestrator, OrchestratorConfig, RiskBasedPolicy,
+    StoredContextProvider, ToolRegistry,
     actions::{ActionStore, ApprovalCoordinator, ApprovalPolicy},
     conversation::ConversationStore,
+    deterministic::RememberMemoryHandler,
     turn::TurnEvent,
 };
 use assistant_models::{ModelId, ModelProvider};
@@ -46,6 +48,13 @@ pub struct Dependencies {
     /// an in-process map, because a conversation that silently vanishes on
     /// restart is worse than one that never claimed to persist.
     pub conversations: Option<Arc<dyn ConversationStore>>,
+    /// Durable memory store.
+    ///
+    /// `None` when no `DATABASE_URL` is configured. Explicit "remember that
+    /// ..." requests are answered with a diagnostic rather than silently
+    /// discarding the input, and the bounded memory retrieval on the context
+    /// path is skipped.
+    pub memory: Option<Arc<dyn assistant_memory::MemoryStore>>,
 }
 
 impl Default for Dependencies {
@@ -56,6 +65,7 @@ impl Default for Dependencies {
             store: None,
             approval_policy: ApprovalPolicy::default(),
             conversations: None,
+            memory: None,
         }
     }
 }
@@ -107,27 +117,43 @@ pub fn build(
         store,
         approval_policy,
         conversations,
+        memory,
     } = deps;
     let registry = tools;
 
-    // The status handler answers from real process state, so it is wired with
-    // the same registry and provider the rest of the turn would have used.
-    let router = Arc::new(
-        DeterministicRouter::new().with(Arc::new(AssistantStatusHandler::new(
-            model.as_ref().map(|m| m.name().to_string()),
-            registry.clone(),
-        ))),
-    );
+    // Deterministic handlers, registration order = precedence. The remember
+    // handler runs before the status handler: an explicit "remember that ..."
+    // must not fall through to a generic status message when the phrasing
+    // happens to include one of its trigger words.
+    let mut router = DeterministicRouter::new();
+    if let Some(store) = memory.clone() {
+        router.register(Arc::new(RememberMemoryHandler::new(store)));
+    }
+    router.register(Arc::new(AssistantStatusHandler::new(
+        model.as_ref().map(|m| m.name().to_string()),
+        registry.clone(),
+    )));
+    let router = Arc::new(router);
 
     // The read path and the write path point at the same store: the context
-    // provider reads history, the orchestrator writes it.
-    let context = conversations.clone().map(|store| {
-        Arc::new(StoredContextProvider::new(store, settings.context_window))
-            as Arc<dyn assistant_core::ContextProvider>
-    });
+    // provider reads history, the orchestrator writes it. When a memory store
+    // is configured, wrap the base provider with bounded retrieval so a small,
+    // ranked slice of active memories is available to the model as facts.
+    let base_context: Arc<dyn assistant_core::ContextProvider> = match conversations.clone() {
+        Some(store) => Arc::new(StoredContextProvider::new(store, settings.context_window)),
+        None => Arc::new(EmptyContextProvider),
+    };
+    let context: Arc<dyn assistant_core::ContextProvider> = match memory.clone() {
+        Some(memory_store) => Arc::new(MemoryContextProvider::new(
+            base_context,
+            memory_store,
+            assistant_memory::MAX_CONTEXT_MEMORIES,
+        )),
+        None => base_context,
+    };
 
     // Built first so the coordinator can borrow its executor.
-    let mut builder = Orchestrator::builder()
+    let builder = Orchestrator::builder()
         .registry(registry)
         .policy(Arc::new(RiskBasedPolicy::new()))
         .router(router)
@@ -138,11 +164,8 @@ pub fn build(
             system_prompt: Some(settings.system_prompt),
         })
         .maybe_model(model)
-        .maybe_conversations(conversations);
-
-    if let Some(context) = context {
-        builder = builder.context(context);
-    }
+        .maybe_conversations(conversations)
+        .context(context);
 
     let orchestrator = builder.build();
 

@@ -12,7 +12,7 @@ use uuid::Uuid;
 /// Bumped whenever a breaking change is made to the types in this crate. The
 /// client sends the version it was built against so the server can reject a
 /// mismatched build instead of misparsing it.
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 pub type ConversationId = Uuid;
 pub type MessageId = Uuid;
@@ -598,4 +598,152 @@ pub struct AcademicSyncResult {
     /// Imported tasks left alone because the user had edited the field the
     /// provider wanted to change.
     pub tasks_skipped_user_edited: usize,
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 7 -- long-term memory
+// ---------------------------------------------------------------------------
+//
+// The wire-side mirror of `crates/assistant-memory`. Nothing here changes what
+// the server enforces: ownership, secret rejection, lifecycle transitions and
+// ranking are decided in Rust. These types exist so the mobile Memory screen
+// and any future client speak the same vocabulary as the server.
+
+/// Kinds of memory. Kept in lockstep with `assistant_memory::MemoryKind` and
+/// with the database `check` constraint on `memories.kind`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryKindDto {
+    Preference,
+    Fact,
+    Idea,
+    Commitment,
+    Project,
+    Temporary,
+}
+
+/// Where a memory sits in its life. Same set as `assistant_memory::Lifecycle`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemoryLifecycleDto {
+    Active,
+    Archived,
+    Superseded,
+}
+
+/// Where a memory came from. Same set as `assistant_memory::MemorySource`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MemorySourceDto {
+    ExplicitUserInput,
+    Conversation,
+    Task,
+    Note,
+    Idea,
+    Project,
+    Document,
+    ExternalSource,
+}
+
+/// Provenance tuple. `source_ref` is `None` for explicit user input, which has
+/// no other identifier the client needs to know about.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryProvenanceDto {
+    pub source_kind: MemorySourceDto,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_ref: Option<String>,
+}
+
+/// A memory row as the client sees it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryItem {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub kind: MemoryKindDto,
+    pub lifecycle: MemoryLifecycleDto,
+    pub content: String,
+    /// 1..=5, higher is more important. Set by the application, not by the
+    /// model.
+    pub importance: u8,
+    /// 0.0..=1.0. Confidence in the content; not the same as importance.
+    pub confidence: f32,
+    pub provenance: MemoryProvenanceDto,
+    /// Only meaningful for temporary memories.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub expires_at: Option<OffsetDateTime>,
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub updated_at: OffsetDateTime,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub last_accessed_at: Option<OffsetDateTime>,
+    pub access_count: u32,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub archived_at: Option<OffsetDateTime>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub superseded_by: Option<Uuid>,
+}
+
+/// Payload for `POST /v1/memories`.
+///
+/// `user_id` is deliberately absent: the server takes it from the
+/// authenticated principal. A client cannot claim to be somebody else, and
+/// echoing the id back would just create a shape you could get wrong.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateMemoryRequest {
+    pub kind: MemoryKindDto,
+    pub content: String,
+    /// Defaults to `3` when absent.
+    #[serde(default)]
+    pub importance: Option<u8>,
+    /// Defaults to `1.0` for the explicit path when absent.
+    #[serde(default)]
+    pub confidence: Option<f32>,
+    /// Defaults to `explicit_user_input` when absent.
+    #[serde(default)]
+    pub source_kind: Option<MemorySourceDto>,
+    #[serde(default)]
+    pub source_ref: Option<String>,
+    /// Required for `kind == Temporary`.
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub expires_at: Option<OffsetDateTime>,
+    /// The old memory this one replaces. Marked superseded on success.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supersedes: Option<Uuid>,
+}
+
+/// Payload for `PATCH /v1/memories/:id`. Every field is optional; the server
+/// leaves unnamed fields alone.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateMemoryRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<MemoryKindDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub importance: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
+    /// `Some(Some(_))` sets, `Some(None)` clears, `None` leaves alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<Option<OffsetDateTime>>,
+}
+
+/// A model- or integration-authored suggestion. Not authoritative: the server
+/// validates every field before it becomes a `MemoryItem`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryProposalDto {
+    pub kind: MemoryKindDto,
+    pub content: String,
+    #[serde(default)]
+    pub confidence: Option<f32>,
+    #[serde(default)]
+    pub importance: Option<u8>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    pub source_kind: MemorySourceDto,
+    #[serde(default)]
+    pub source_ref: Option<String>,
+    #[serde(default, with = "time::serde::rfc3339::option")]
+    pub expires_at: Option<OffsetDateTime>,
 }

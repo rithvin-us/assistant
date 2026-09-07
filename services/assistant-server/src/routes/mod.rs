@@ -7,6 +7,7 @@ pub mod academic;
 pub mod conversation;
 pub mod google;
 pub mod health;
+pub mod memory;
 pub mod productivity;
 pub mod transcribe;
 
@@ -123,6 +124,17 @@ pub fn router(state: SharedState) -> Router {
         // Unified academic context
         .route("/v1/academic/overview", get(academic::academic_overview))
         .route("/v1/academic/sync", post(academic::academic_sync))
+        // Long-term memory
+        .route(
+            "/v1/memories",
+            get(memory::list_memories).post(memory::create_memory),
+        )
+        .route(
+            "/v1/memories/{id}",
+            get(memory::get_memory).patch(memory::update_memory),
+        )
+        .route("/v1/memories/{id}/archive", post(memory::archive_memory))
+        .route("/v1/memories/{id}/restore", post(memory::restore_memory))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             auth::require_bearer,
