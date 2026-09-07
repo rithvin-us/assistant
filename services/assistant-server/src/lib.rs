@@ -16,6 +16,7 @@ pub mod memory_store;
 pub mod orchestration;
 pub mod planning;
 pub mod prompt;
+pub mod rate_limit;
 pub mod routes;
 pub mod state;
 pub mod store;
@@ -119,6 +120,13 @@ pub fn app(
         cartesia_stt_model: config.cartesia_stt_model.clone(),
         cartesia_tts_model: config.cartesia_tts_model.clone(),
         cartesia_tts_voice_id: config.cartesia_tts_voice_id.clone(),
+        // 30 voice calls per principal per minute, per endpoint. Comfortably
+        // above hands-on use -- a turn is a handful of seconds -- and far below
+        // what a runaway loop would manage.
+        voice_rate_limiter: std::sync::Arc::new(rate_limit::RateLimiter::new(
+            30,
+            std::time::Duration::from_secs(60),
+        )),
     });
 
     let origins: Vec<HeaderValue> = config

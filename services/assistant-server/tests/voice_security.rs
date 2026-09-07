@@ -205,3 +205,30 @@ async fn the_diagnostic_never_returns_the_api_key() {
         "diagnostic exposed an api_key field: {body}"
     );
 }
+
+#[tokio::test]
+async fn repeated_requests_are_rate_limited_per_principal() {
+    let addr = spawn().await;
+
+    // The limit is 30 per minute per bucket. Drive past it and the endpoint must
+    // refuse rather than forwarding every one to a paid provider.
+    let mut refused = None;
+    for _ in 0..40 {
+        let res = client()
+            .post(format!("http://{addr}/v1/voice/speak"))
+            .header("Authorization", format!("Bearer {TEST_TOKEN}"))
+            .json(&serde_json::json!({ "text": "hello" }))
+            .send()
+            .await
+            .expect("request sent");
+
+        if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            refused = Some(res);
+            break;
+        }
+    }
+
+    let res = refused.expect("the endpoint never refused within 40 requests");
+    let err: serde_json::Value = res.json().await.expect("error body");
+    assert_eq!(err["code"], "rate_limited");
+}

@@ -15,7 +15,22 @@ use axum::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::state::SharedState;
+use crate::{rate_limit::RateLimited, state::SharedState};
+
+/// Turns a refusal into the response, including `Retry-After` so a client can
+/// back off rather than hammering.
+fn too_many_requests(limited: RateLimited) -> (StatusCode, Json<ApiError>) {
+    (
+        StatusCode::TOO_MANY_REQUESTS,
+        Json(ApiError {
+            code: "rate_limited".into(),
+            message: format!(
+                "Too many voice requests. Try again in {} seconds.",
+                limited.retry_after_secs
+            ),
+        }),
+    )
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VoiceTranscribeResponse {
@@ -55,10 +70,16 @@ const MAX_TTS_CHARS: usize = 4_000;
 
 pub async fn transcribe(
     State(state): State<SharedState>,
-    Extension(_principal): Extension<Principal>,
+    Extension(principal): Extension<Principal>,
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Json<VoiceTranscribeResponse>, (StatusCode, Json<ApiError>)> {
+    // Metered per principal, before any work is done on the request.
+    state
+        .voice_rate_limiter
+        .check(principal.user_id, "stt")
+        .map_err(too_many_requests)?;
+
     if body.is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -131,9 +152,14 @@ pub async fn transcribe(
 
 pub async fn speak(
     State(state): State<SharedState>,
-    Extension(_principal): Extension<Principal>,
+    Extension(principal): Extension<Principal>,
     Json(payload): Json<VoiceSpeakRequest>,
 ) -> Result<Json<VoiceSpeakResponse>, (StatusCode, Json<ApiError>)> {
+    state
+        .voice_rate_limiter
+        .check(principal.user_id, "tts")
+        .map_err(too_many_requests)?;
+
     if payload.text.trim().is_empty() {
         return Err((
             StatusCode::BAD_REQUEST,

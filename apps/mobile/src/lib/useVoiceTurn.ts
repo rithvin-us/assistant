@@ -25,7 +25,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AudioPlaybackController, VoiceRequestError, speakVoiceText } from "../api/voice";
 import { transcribeAudio } from "../api/transcribe";
-import { executeTurn } from "../api/conversation";
+import { TurnFailedError, executeTurn } from "../api/conversation";
 import type { VoiceState } from "../api/types";
 
 /**
@@ -52,6 +52,8 @@ export interface VoiceTurn {
   /** Barge-in: stop speaking, abort in-flight work, return to idle. */
   interrupt: () => void;
   clearError: () => void;
+  /** Drops the accumulated context and starts a new conversation. */
+  resetConversation: () => void;
 }
 
 /** Turns whatever was thrown into something safe and specific to show. */
@@ -72,6 +74,7 @@ function describe(err: unknown): VoiceTurnFailure {
         return { code: err.code, message: err.message };
     }
   }
+  if (err instanceof TurnFailedError) return { code: err.code, message: err.message };
   if (err instanceof Error) return { code: "voice_error", message: err.message };
   return { code: "voice_error", message: "Something went wrong." };
 }
@@ -83,6 +86,14 @@ export function useVoiceTurn(): VoiceTurn {
 
   /** The turn allowed to write state. Anything else is stale by definition. */
   const currentTurn = useRef<string | null>(null);
+  /**
+   * One conversation across consecutive voice turns.
+   *
+   * Each turn used to mint a fresh conversation id, so "which one is due first?"
+   * reached the assistant with no history behind it and could not be answered.
+   * Held in a ref so it survives re-renders but not a remount of the screen.
+   */
+  const conversationId = useRef<string>(crypto.randomUUID());
   const abort = useRef<AbortController | null>(null);
   const playback = useRef(new AudioPlaybackController());
   const mounted = useRef(true);
@@ -126,6 +137,11 @@ export function useVoiceTurn(): VoiceTurn {
 
   const clearError = useCallback(() => setError(null), []);
 
+  /** Starts a fresh conversation, dropping the context of previous turns. */
+  const resetConversation = useCallback(() => {
+    conversationId.current = crypto.randomUUID();
+  }, []);
+
   const run = useCallback(async (audio: Blob | null) => {
     // Supersede whatever came before, and stop it costing anything.
     abort.current?.abort();
@@ -165,7 +181,7 @@ export function useVoiceTurn(): VoiceTurn {
 
       setTranscript(spoken);
       setState("thinking");
-      const reply = await executeTurn(spoken);
+      const reply = await executeTurn(spoken, conversationId.current);
       if (!live()) return;
 
       if (!reply || reply.trim().length === 0) {
@@ -208,5 +224,5 @@ export function useVoiceTurn(): VoiceTurn {
     }
   }, []);
 
-  return { state, transcript, error, run, interrupt, clearError };
+  return { state, transcript, error, run, interrupt, clearError, resetConversation };
 }

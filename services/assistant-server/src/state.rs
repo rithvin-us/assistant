@@ -40,6 +40,8 @@ pub struct AppState {
     pub cartesia_stt_model: String,
     pub cartesia_tts_model: String,
     pub cartesia_tts_voice_id: String,
+    /// Bounds how many paid voice calls one principal can make.
+    pub voice_rate_limiter: Arc<crate::rate_limit::RateLimiter>,
 }
 
 impl AppState {

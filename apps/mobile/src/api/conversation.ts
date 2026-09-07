@@ -82,7 +82,30 @@ export async function subscribe(handlers: {
   };
 }
 
-/** Executes one full assistant turn over WebSocket and returns the combined answer text. */
+/** A turn that could not be completed. Carries the server's code where there is one. */
+export class TurnFailedError extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+  ) {
+    super(message);
+    this.name = "TurnFailedError";
+  }
+}
+
+/**
+ * Executes one full assistant turn over the WebSocket and returns the answer.
+ *
+ * Pass a stable `conversationId` to keep context across turns. Omitting it mints
+ * a fresh conversation, which is what the voice path used to do on every turn --
+ * so a follow-up like "which one is due first?" arrived with no history behind
+ * it and the assistant could not possibly answer it.
+ *
+ * Throws rather than returning placeholder prose. It previously returned strings
+ * like "I heard you, but the assistant connection is offline." and "Done." as if
+ * they were the assistant's reply; the voice path then spoke them aloud, so a
+ * connection failure was indistinguishable from an answer.
+ */
 export async function executeTurn(userText: string, conversationId?: string): Promise<string> {
   const id = conversationId || crypto.randomUUID();
   let fullAnswer = "";
@@ -90,11 +113,13 @@ export async function executeTurn(userText: string, conversationId?: string): Pr
   try {
     await openConversation(id);
   } catch {
-    // If not in Tauri or socket fails, fallback to direct fetch/mock
-    return "I heard you, but the assistant connection is offline.";
+    throw new TurnFailedError(
+      "Couldn't reach the assistant.",
+      "assistant_unreachable",
+    );
   }
 
-  return new Promise<string>((resolve) => {
+  return new Promise<string>((resolve, reject) => {
     let unlisten: UnlistenFn | null = null;
 
     const cleanup = () => {
@@ -108,16 +133,29 @@ export async function executeTurn(userText: string, conversationId?: string): Pr
           fullAnswer += frame.text;
         } else if (frame.type === "turn_end") {
           cleanup();
-          resolve(fullAnswer || "Done.");
+          // An empty answer is returned as empty. The caller decides what that
+          // means; inventing "Done." put words in the assistant's mouth.
+          resolve(fullAnswer);
         } else if (frame.type === "error") {
           cleanup();
-          resolve(friendlyError(frame.code, frame.message));
+          reject(new TurnFailedError(friendlyError(frame.code, frame.message), frame.code));
         }
       },
       onStatus: (status) => {
         if (status.state === "closed") {
           cleanup();
-          resolve(fullAnswer || "Conversation closed.");
+          // A socket that closes mid-turn has not answered. If some text had
+          // already streamed it is real and worth keeping; nothing else is.
+          if (fullAnswer) {
+            resolve(fullAnswer);
+          } else {
+            reject(
+              new TurnFailedError(
+                "The connection closed before the assistant answered.",
+                "connection_closed",
+              ),
+            );
+          }
         }
       },
     }).then((un) => {
