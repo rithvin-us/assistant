@@ -32,6 +32,8 @@ import {
   disconnectGoogleAccount,
 } from "../api/google";
 
+import PullToRefresh from "../components/PullToRefresh";
+
 import { isTauri } from "../api/bridge";
 import { openUrl } from "@tauri-apps/plugin-opener";
 
@@ -85,6 +87,10 @@ export default function ConnectionsScreen({ onBack }: ConnectionsScreenProps) {
       document.removeEventListener("visibilitychange", onFocus);
     };
   }, [loadAccounts]);
+
+  const handleRefresh = async () => {
+    await loadAccounts();
+  };
 
   const handleConnect = async () => {
     try {
@@ -173,7 +179,7 @@ export default function ConnectionsScreen({ onBack }: ConnectionsScreenProps) {
       </Box>
 
       {/* Main Content */}
-      <Box sx={{ flex: 1, overflowY: "auto", p: 2 }}>
+      <PullToRefresh onRefresh={handleRefresh} sx={{ p: 2 }}>
         {errorMessage && (
           <Box
             sx={{
@@ -330,7 +336,7 @@ export default function ConnectionsScreen({ onBack }: ConnectionsScreenProps) {
             })}
           </Box>
         )}
-      </Box>
+      </PullToRefresh>
 
       {/* Disconnect Confirmation Dialog */}
       <Dialog

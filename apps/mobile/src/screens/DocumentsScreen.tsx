@@ -7,6 +7,8 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
+
+import PullToRefresh from "../components/PullToRefresh";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
 import TextField from "@mui/material/TextField";
@@ -107,9 +109,14 @@ export default function DocumentsScreen({ onBack }: DocumentsScreenProps) {
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const reload = async () => {
-    setLoading(true);
-    setErrorMsg(null);
+  /**
+   * Loads the document list, and the page hits when a search is active.
+   *
+   * `silent` is used by the processing poll and by pull-to-refresh so neither
+   * throws a spinner over content the user is reading.
+   */
+  const reload = async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     try {
       const docs = await listDocuments({
         q: searchQuery.trim() || undefined,
@@ -122,14 +129,22 @@ export default function DocumentsScreen({ onBack }: DocumentsScreenProps) {
       } else {
         setPageHits([]);
       }
+      setErrorMsg(null);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Failed to load documents";
-      setErrorMsg(message);
-      setDocuments([]);
-      setPageHits([]);
+      // Report the real failure. This used to be rewritten to "storage is
+      // initializing or offline", which was a workaround for the documents
+      // table not existing; with the schema in place that text would now hide
+      // genuine errors behind a reassuring message.
+      setErrorMsg(err instanceof Error ? err.message : "Failed to load documents");
+      // Deliberately does NOT clear the list. A failed refresh must not look
+      // identical to having no documents.
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
+  };
+
+  const handleRefresh = async () => {
+    await reload({ silent: true });
   };
 
   useEffect(() => {
@@ -152,10 +167,10 @@ export default function DocumentsScreen({ onBack }: DocumentsScreenProps) {
         setErrorMsg(null);
       } catch (err) {
         if (!cancelled) {
-          const message =
-            err instanceof Error ? err.message : "Failed to load documents";
-          setErrorMsg(message);
-          setDocuments([]);
+          setErrorMsg(
+            err instanceof Error ? err.message : "Failed to load documents",
+          );
+          // Keep whatever is already listed; see reload() above.
         }
       } finally {
         if (!cancelled) setLoading(false);
@@ -165,6 +180,27 @@ export default function DocumentsScreen({ onBack }: DocumentsScreenProps) {
       cancelled = true;
     };
   }, [searchQuery]);
+
+  // Ingestion is asynchronous on the server: a document walks
+  // uploaded -> extracting -> ocr -> verifying -> indexed (or failed). Nothing
+  // pushed those transitions to the client, so a freshly uploaded file sat on
+  // "Uploaded" until the user navigated away and back, which looks like the
+  // upload silently failed. Poll only while something is actually mid-pipeline,
+  // and stop as soon as every document reaches a terminal state.
+  const hasPendingWork = documents.some(
+    (d) => d.processing_state !== "indexed" && d.processing_state !== "failed",
+  );
+
+  useEffect(() => {
+    if (!hasPendingWork) return;
+    const iv = setInterval(() => {
+      if (document.visibilityState === "visible") void reload({ silent: true });
+    }, 3000);
+    return () => clearInterval(iv);
+    // `reload` is redefined each render; depending on it would restart the
+    // interval constantly. The poll only needs to know that work is in flight.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hasPendingWork]);
 
   const handleUpload = async (file: File) => {
     try {
@@ -293,7 +329,7 @@ export default function DocumentsScreen({ onBack }: DocumentsScreenProps) {
       </Box>
 
       {/* Body */}
-      <Box sx={{ flex: 1, overflowY: "auto", px: 2, pb: 12 }}>
+      <PullToRefresh onRefresh={handleRefresh} sx={{ px: 2, pb: 12 }}>
         {errorMsg && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {errorMsg}
@@ -407,7 +443,7 @@ export default function DocumentsScreen({ onBack }: DocumentsScreenProps) {
             </Card>
           ))}
         </Stack>
-      </Box>
+      </PullToRefresh>
 
       {/* Upload FAB */}
       <input

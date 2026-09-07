@@ -21,7 +21,7 @@ import EventRoundedIcon from "@mui/icons-material/EventRounded";
 import MailOutlineRoundedIcon from "@mui/icons-material/MailOutlineRounded";
 import GoogleIcon from "@mui/icons-material/Google";
 import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
-import CloudDoneOutlinedIcon from "@mui/icons-material/CloudDoneOutlined";
+import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 
 import type { ConnectionState } from "../api/bridge";
@@ -40,9 +40,16 @@ export default function MoreSheet({
 }) {
   const FEATURES = [
     {
+      icon: <GraphicEqRoundedIcon sx={{ color: "#7C3AED" }} />,
+      label: "Voice Assistant",
+      note: "Primary voice interface & status",
+      enabled: true,
+      screen: "home" as ScreenType,
+    },
+    {
       icon: <DescriptionOutlinedIcon sx={{ color: "#2563EB" }} />,
       label: "Notes",
-      note: "Auto-saving notes & tags",
+      note: "Apple Notes-inspired auto-saving workspace",
       enabled: true,
       screen: "notes" as ScreenType,
     },
@@ -52,13 +59,6 @@ export default function MoreSheet({
       note: "Standalone task management & priorities",
       enabled: true,
       screen: "tasks" as ScreenType,
-    },
-    {
-      icon: <CloudDoneOutlinedIcon sx={{ color: "#2563EB" }} />,
-      label: "Documents",
-      note: "Upload, search and read PDFs and text files",
-      enabled: true,
-      screen: "documents" as ScreenType,
     },
     {
       icon: <SchoolOutlinedIcon sx={{ color: "#0F9D58" }} />,

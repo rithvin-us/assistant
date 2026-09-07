@@ -86,6 +86,8 @@ import {
 
 } from "../api/google";
 
+import PullToRefresh from "../components/PullToRefresh";
+
 
 
 interface CalendarScreenProps {
@@ -231,6 +233,10 @@ export default function CalendarScreen({ onBack }: CalendarScreenProps) {
       document.removeEventListener("visibilitychange", onFocus);
     };
   }, [loadEvents]);
+
+  const handleRefresh = async () => {
+    await loadEvents(false);
+  };
 
 
 
@@ -594,7 +600,7 @@ export default function CalendarScreen({ onBack }: CalendarScreenProps) {
 
       {/* Content */}
 
-      <Box sx={{ flex: 1, overflowY: "auto", p: 2 }}>
+      <PullToRefresh onRefresh={handleRefresh} disabled={!selectedAccountId} sx={{ p: 2 }}>
 
         {errorMessage && (
 
@@ -960,7 +966,7 @@ export default function CalendarScreen({ onBack }: CalendarScreenProps) {
 
         )}
 
-      </Box>
+      </PullToRefresh>
 
 
 

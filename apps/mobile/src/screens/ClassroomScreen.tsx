@@ -36,6 +36,7 @@ import {
   syncAcademic,
 } from "../api/academic";
 import AccountPicker from "../components/AccountPicker";
+import PullToRefresh from "../components/PullToRefresh";
 import { hasScopesFor } from "../api/scopes";
 import type {
   AccountSummary,
@@ -153,6 +154,10 @@ export default function ClassroomScreen({ onBack, onOpenConnections }: Props) {
     }
   }, [accountId, loadCourses, openCourse, selectedCourse]);
 
+  const handleRefresh = async () => {
+    await refresh();
+  };
+
   const selectedAccount = accounts.find((a) => a.id === accountId);
   const canUse = hasScopesFor(selectedAccount, "classroom");
 
@@ -200,7 +205,7 @@ export default function ClassroomScreen({ onBack, onOpenConnections }: Props) {
         </Box>
       )}
 
-      <Box sx={{ flex: 1, overflowY: "auto" }}>
+      <PullToRefresh onRefresh={handleRefresh} disabled={busy || !canUse || !accountId}>
         {!selectedCourse && !busy && courses.length === 0 && canUse && (
           <Box sx={{ px: 3, py: 4, textAlign: "center" }}>
             <Typography variant="body2" sx={{ color: "text.secondary", mb: 2 }}>
@@ -316,7 +321,7 @@ export default function ClassroomScreen({ onBack, onOpenConnections }: Props) {
             )}
           </>
         )}
-      </Box>
+      </PullToRefresh>
     </Box>
   );
 }

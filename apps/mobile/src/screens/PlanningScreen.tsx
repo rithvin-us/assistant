@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { getTodayPlan, getUpcomingPlanning, getConflicts } from '../api/planning';
 import { TodayPlan, UpcomingPlanning, Conflict } from '../api/types';
+import PullToRefresh from "../components/PullToRefresh";
 
 type PlanningTab = 'today' | 'upcoming' | 'plan' | 'conflicts';
 
@@ -31,6 +32,10 @@ export const PlanningScreen: React.FC = () => {
     }
   };
 
+  const handleRefresh = async () => {
+    await loadData();
+  };
+
   useEffect(() => {
     queueMicrotask(() => {
       void loadData();
@@ -53,7 +58,9 @@ export const PlanningScreen: React.FC = () => {
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-950 text-slate-100 p-4 space-y-4 overflow-y-auto">
+    <div className="flex flex-col h-full bg-slate-950 text-slate-100">
+      <PullToRefresh onRefresh={handleRefresh}>
+      <div className="p-4 space-y-4">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-slate-800 pb-3">
         <div>
@@ -268,6 +275,8 @@ export const PlanningScreen: React.FC = () => {
           )}
         </div>
       )}
+      </div>
+      </PullToRefresh>
     </div>
   );
 };
