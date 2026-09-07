@@ -28,6 +28,8 @@ const CHECKING: ConnectionState = {
 };
 
 import { transcribeAudio } from "../api/transcribe";
+import { executeTurn } from "../api/conversation";
+import { speakVoiceText, AudioPlaybackController } from "../api/voice";
 
 // Progressive status stages for AI response synthesis
 const AI_THINKING_STAGES = [
@@ -56,6 +58,7 @@ export default function HomeScreen({
   const isHandsFreeRef = useRef(false);
   const pointerDownTimeRef = useRef(0);
   const pointerStateAtDownRef = useRef<OrbState | null>(null);
+  const playbackControllerRef = useRef(new AudioPlaybackController());
 
   useEffect(() => {
     let cancelled = false;
@@ -98,7 +101,7 @@ export default function HomeScreen({
     };
   }, [currentOrbState]);
 
-  // Automated state progression for thinking and speaking
+  // Safety timeout for listening state
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -108,16 +111,7 @@ export default function HomeScreen({
         isHandsFreeRef.current = false;
         setIsHolding(false);
         setActiveVoiceState("thinking");
-      }, isHolding ? 45000 : 5500);
-    } else if (currentOrbState === "thinking") {
-      timer = setTimeout(() => {
-        setActiveVoiceState("speaking");
-      }, 4200);
-    } else if (currentOrbState === "speaking") {
-      timer = setTimeout(() => {
-        setActiveVoiceState("idle");
-        setTranscribedText(null);
-      }, 5000);
+      }, isHolding ? 45000 : 8000);
     }
 
     return () => {
@@ -136,6 +130,7 @@ export default function HomeScreen({
     pointerStateAtDownRef.current = currentOrbState;
 
     if (currentOrbState === "thinking" || currentOrbState === "speaking") {
+      playbackControllerRef.current.stop();
       setActiveVoiceState("idle");
       isHoldingRef.current = false;
       isHandsFreeRef.current = false;
@@ -148,6 +143,7 @@ export default function HomeScreen({
     }
 
     if (currentOrbState === "idle" || currentOrbState === "connecting") {
+      playbackControllerRef.current.stop();
       isHoldingRef.current = true;
       isHandsFreeRef.current = false;
       setIsHolding(true);
@@ -179,15 +175,34 @@ export default function HomeScreen({
 
       try {
         const audioBlob = await stopListening();
-        if (audioBlob && audioBlob.size > 200 && connection.healthy) {
-          const text = await transcribeAudio(audioBlob);
-          if (text) {
-            setTranscribedText(text);
-            console.log("Transcribed via OpenAI:", text);
+        let userText = "";
+
+        if (audioBlob && audioBlob.size > 200) {
+          userText = await transcribeAudio(audioBlob);
+        }
+
+        if (userText && userText.trim().length > 0) {
+          setTranscribedText(userText);
+          const aiReply = await executeTurn(userText);
+
+          if (aiReply && aiReply.trim().length > 0) {
+            setTranscribedText(aiReply);
+            setActiveVoiceState("speaking");
+            try {
+              const ttsRes = await speakVoiceText(aiReply);
+              if (ttsRes && ttsRes.audio_base64) {
+                await playbackControllerRef.current.playBase64(ttsRes.audio_base64);
+              }
+            } catch (ttsErr) {
+              console.warn("TTS voice playback notice:", ttsErr);
+            }
           }
         }
       } catch (err) {
-        console.warn("Transcription notice:", err);
+        console.warn("Voice turn notice:", err);
+      } finally {
+        setActiveVoiceState("idle");
+        setTranscribedText(null);
       }
     };
 

@@ -82,6 +82,52 @@ export async function subscribe(handlers: {
   };
 }
 
+/** Executes one full assistant turn over WebSocket and returns the combined answer text. */
+export async function executeTurn(userText: string, conversationId?: string): Promise<string> {
+  const id = conversationId || crypto.randomUUID();
+  let fullAnswer = "";
+
+  try {
+    await openConversation(id);
+  } catch {
+    // If not in Tauri or socket fails, fallback to direct fetch/mock
+    return "I heard you, but the assistant connection is offline.";
+  }
+
+  return new Promise<string>((resolve) => {
+    let unlisten: UnlistenFn | null = null;
+
+    const cleanup = () => {
+      if (unlisten) unlisten();
+      void closeConversation();
+    };
+
+    void subscribe({
+      onFrame: (frame) => {
+        if (frame.type === "assistant_delta") {
+          fullAnswer += frame.text;
+        } else if (frame.type === "turn_end") {
+          cleanup();
+          resolve(fullAnswer || "Done.");
+        } else if (frame.type === "error") {
+          cleanup();
+          resolve(friendlyError(frame.code, frame.message));
+        }
+      },
+      onStatus: (status) => {
+        if (status.state === "closed") {
+          cleanup();
+          resolve(fullAnswer || "Conversation closed.");
+        }
+      },
+    }).then((un) => {
+      unlisten = un;
+      void sendUserText(userText);
+    });
+  });
+}
+
+
 /**
  * Turns a server error code into something worth showing a user.
  *
