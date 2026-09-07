@@ -148,12 +148,12 @@ impl Config {
                 .ok()
                 .map(|url| url.trim().to_string())
                 .filter(|url| !url.is_empty()),
-            openai_transcription_model: env_or("OPENAI_TRANSCRIPTION_MODEL", "gemini-1.5-flash"),
+            openai_transcription_model: env_or("OPENAI_TRANSCRIPTION_MODEL", "gemini-flash-latest"),
             openai_transcription_language: std::env::var("OPENAI_TRANSCRIPTION_LANGUAGE")
                 .ok()
                 .map(|l| l.trim().to_string())
                 .filter(|l| !l.is_empty()),
-            model: env_or("ASSISTANT_MODEL", "gemini-1.5-flash"),
+            model: env_or("ASSISTANT_MODEL", "gemini-flash-latest"),
             model_max_output_tokens: parse_env("ASSISTANT_MODEL_MAX_OUTPUT_TOKENS", "4096")?,
             model_timeout: Duration::from_millis(parse_env("ASSISTANT_MODEL_TIMEOUT_MS", "60000")?),
             context_max_messages: parse_env("ASSISTANT_CONTEXT_MAX_MESSAGES", "40")?,

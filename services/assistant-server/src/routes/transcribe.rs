@@ -79,7 +79,7 @@ pub async fn transcribe(
         let gemini_model = if state.openai_transcription_model.starts_with("gemini") {
             &state.openai_transcription_model
         } else {
-            "gemini-1.5-flash"
+            "gemini-flash-latest"
         };
 
         let payload = serde_json::json!({
