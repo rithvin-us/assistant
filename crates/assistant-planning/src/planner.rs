@@ -173,7 +173,8 @@ pub fn generate_upcoming_planning(
         .cloned()
         .collect();
 
-    let conflicts = detect_conflicts(items, commitments, &windows, &[], now);
+    let empty_blocks: Vec<PlanBlock> = Vec::new();
+    let conflicts = detect_conflicts(items, commitments, &windows, &empty_blocks, now);
     let feasibility = calculate_feasibility(items, &windows, &conflicts);
 
     let mut daily_workload_minutes = Vec::new();

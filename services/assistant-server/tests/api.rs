@@ -263,7 +263,7 @@ async fn a_tool_turn_streams_proposal_completion_and_end() {
         frames.iter().any(|f| matches!(
             f,
             ServerFrame::ToolProposed { name, risk, .. }
-                if name == "notes.read" && *risk == RiskLevel::Green
+                if name == "notes.read" && risk == &RiskLevel::Green
         )),
         "no ToolProposed frame: {frames:?}"
     );
@@ -307,7 +307,9 @@ async fn an_approval_required_tool_halts_the_turn_over_the_socket() {
     let approval = frames
         .iter()
         .find_map(|frame| match frame {
-            ServerFrame::ApprovalRequired { name, risk, .. } => Some((name.clone(), risk.clone())),
+            ServerFrame::ApprovalRequired { name, risk, .. } => {
+                Some((name.clone(), risk.to_owned()))
+            }
             _ => None,
         })
         .unwrap_or_else(|| panic!("no ApprovalRequired frame: {frames:?}"));
@@ -527,7 +529,7 @@ async fn a_held_action_is_approved_over_the_socket_and_then_executes() {
                 approval_id,
                 summary,
                 ..
-            } => Some((*approval_id, summary.clone())),
+            } => Some((approval_id.to_owned(), summary.clone())),
             _ => None,
         })
         .unwrap_or_else(|| panic!("no ApprovalRequired frame: {frames:?}"));
@@ -627,7 +629,7 @@ async fn a_held_action_rejected_over_the_socket_never_executes() {
     let approval_id = frames
         .iter()
         .find_map(|frame| match frame {
-            ServerFrame::ApprovalRequired { approval_id, .. } => *approval_id,
+            ServerFrame::ApprovalRequired { approval_id, .. } => approval_id.to_owned(),
             _ => None,
         })
         .expect("an approval id");
@@ -735,8 +737,8 @@ async fn assistant_text_reaches_the_client_incrementally_not_in_one_frame() {
     let message_ids: std::collections::HashSet<_> = frames
         .iter()
         .filter_map(|frame| match frame {
-            ServerFrame::AssistantDelta { message_id, .. } => Some(message_id),
-            ServerFrame::TurnEnd { message_id } => Some(message_id),
+            ServerFrame::AssistantDelta { message_id, .. } => Some(message_id.to_owned()),
+            ServerFrame::TurnEnd { message_id } => Some(message_id.to_owned()),
             _ => None,
         })
         .collect();

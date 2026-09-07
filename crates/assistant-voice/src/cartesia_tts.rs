@@ -1,7 +1,6 @@
 //! Cartesia Text-to-Speech (TTS) implementation.
 
 use crate::traits::{AudioEncoding, TextToSpeechProvider, TtsAudioChunk, TtsRequest, VoiceError};
-use async_trait::async_trait;
 use serde::Serialize;
 use tokio::sync::mpsc;
 
@@ -52,7 +51,6 @@ impl CartesiaTtsProvider {
     }
 }
 
-#[async_trait]
 impl TextToSpeechProvider for CartesiaTtsProvider {
     async fn synthesize(&self, request: TtsRequest) -> Result<Vec<u8>, VoiceError> {
         if self.api_key.trim().is_empty() {

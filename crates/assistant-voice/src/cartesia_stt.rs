@@ -1,7 +1,6 @@
 //! Cartesia Speech-to-Text (STT) implementation.
 
 use crate::traits::{AudioPayload, SpeechToTextProvider, SttResponse, VoiceError};
-use async_trait::async_trait;
 use reqwest::multipart::{Form, Part};
 use serde::Deserialize;
 
@@ -38,7 +37,6 @@ impl CartesiaSttProvider {
     }
 }
 
-#[async_trait]
 impl SpeechToTextProvider for CartesiaSttProvider {
     async fn transcribe(&self, audio: AudioPayload) -> Result<SttResponse, VoiceError> {
         if self.api_key.trim().is_empty() {

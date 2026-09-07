@@ -4,7 +4,6 @@ use crate::traits::{
     AudioPayload, SpeechToTextProvider, SttResponse, TextToSpeechProvider, TtsAudioChunk,
     TtsRequest, VoiceError,
 };
-use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 pub struct FakeSpeechToTextProvider {
@@ -21,7 +20,6 @@ impl Default for FakeSpeechToTextProvider {
     }
 }
 
-#[async_trait]
 impl SpeechToTextProvider for FakeSpeechToTextProvider {
     async fn transcribe(&self, _audio: AudioPayload) -> Result<SttResponse, VoiceError> {
         if self.should_fail {
@@ -52,7 +50,6 @@ impl Default for FakeTextToSpeechProvider {
     }
 }
 
-#[async_trait]
 impl TextToSpeechProvider for FakeTextToSpeechProvider {
     async fn synthesize(&self, request: TtsRequest) -> Result<Vec<u8>, VoiceError> {
         if self.should_fail {

@@ -283,7 +283,6 @@ dependencies = [
 name = "assistant-voice"
 version = "0.1.0"
 dependencies = [
- "async-trait",
  "bytes",
  "dotenvy",
  "reqwest",

@@ -1,8 +1,9 @@
 //! Provider abstractions and domain models for Voice (STT & TTS).
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use thiserror::Error;
+use tokio::sync::mpsc;
 
 #[derive(Debug, Error)]
 pub enum VoiceError {
@@ -66,17 +67,26 @@ pub struct TtsAudioChunk {
 }
 
 /// Abstract Speech-to-Text Provider.
-#[async_trait]
+///
+/// The futures are desugared rather than written as `async fn` so the `Send`
+/// bound is part of the trait: the conversation and voice WebSocket handlers
+/// drive these providers inside `tokio::spawn`, which requires it.
 pub trait SpeechToTextProvider: Send + Sync {
-    async fn transcribe(&self, audio: AudioPayload) -> Result<SttResponse, VoiceError>;
+    fn transcribe(
+        &self,
+        audio: AudioPayload,
+    ) -> impl Future<Output = Result<SttResponse, VoiceError>> + Send;
 }
 
 /// Abstract Text-to-Speech Provider.
-#[async_trait]
 pub trait TextToSpeechProvider: Send + Sync {
-    async fn synthesize(&self, request: TtsRequest) -> Result<Vec<u8>, VoiceError>;
-    async fn synthesize_stream(
+    fn synthesize(
         &self,
         request: TtsRequest,
-    ) -> Result<tokio::sync::mpsc::Receiver<Result<TtsAudioChunk, VoiceError>>, VoiceError>;
+    ) -> impl Future<Output = Result<Vec<u8>, VoiceError>> + Send;
+
+    fn synthesize_stream(
+        &self,
+        request: TtsRequest,
+    ) -> impl Future<Output = Result<mpsc::Receiver<Result<TtsAudioChunk, VoiceError>>, VoiceError>> + Send;
 }
