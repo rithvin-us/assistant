@@ -1369,3 +1369,117 @@ provider plus external id. A Gmail message mentioning the same assignment is not
 matched to it. Doing that well needs semantic comparison, which belongs to a
 later milestone; guessing at it here would silently merge two obligations that
 happened to share a word.
+
+## ADR-0035 — Long-term memory is a durable domain, not a running transcript
+
+**Decision.** Memory lives in a first-class `memories` table, owned per user and
+scoped by `user_id` in every statement. The model may **propose** a memory
+(`MemoryProposal`) but never write one: proposals are validated by
+deterministic Rust and only accepted values reach the store as `NewMemory`.
+Retrieval on the assistant path is bounded (at most `MAX_CONTEXT_MEMORIES = 8`
+ranked rows are injected as facts). Ranking, secret rejection, and lifecycle
+transitions are all deterministic.
+
+**Context.** Milestone 2 left `assistant-memory` as a placeholder trait so that
+conversation logging could not silently become memory. M7 fills it, and the
+project has two failure modes to avoid at that boundary. First, letting the
+model be the memory writer: a language model asked to "remember X" and given
+a table would happily invent, exaggerate, or contradict itself, and the
+resulting rows would look like ground truth to the next turn. Second,
+inflating architecture: a memory subsystem tempts embeddings, a vector store,
+a knowledge graph, semantic dedup, and a scheduler, none of which the current
+product needs. The right shape is a small typed domain with clear seams.
+
+**Options.**
+1. Let the model call a `remember(...)` tool that writes directly.
+2. Extract memory from every conversation with a background worker feeding
+   pgvector + embeddings.
+3. A typed domain layer where the model proposes and deterministic code
+   decides, backed by a plain Postgres table with Postgres text search.
+
+**Chosen approach: option 3.**
+
+**Reason.** Option 1 makes model output authoritative and undoes ADR-0005's
+"model output is untrusted input" rule for a different resource. Option 2 is
+what a milestone brief specifically asks not to build — vectors, background
+extraction, embeddings, complex ranking — and the shape it forces (a large
+unowned index of extracted claims) is exactly the "AI memory experiment"
+mode the project rejects. Option 3 keeps memory boring where boring is
+correct: rows in a table with a `user_id`, a `kind`, a `content`, an
+`importance`, a `confidence`, a bounded `MemorySource` for provenance, an
+`expires_at` for temporaries, and a `lifecycle` of `active | archived |
+superseded`. The store is a trait (`assistant_memory::MemoryStore`) and the
+core depends only on the trait — same pattern as `ConversationStore` and
+`ActionStore`.
+
+Provenance is mandatory and enumerated. `explicit_user_input` is the "the
+user typed this" case; the others (`conversation`, `task`, `note`, `idea`,
+`project`, `document`, `external_source`) name where the memory came from
+so the UI can answer *why does the assistant remember this?* Free-form
+provenance would let a proposer invent a category and defeat the audit.
+
+`Importance` (1..=5) and `Confidence` (0.0..=1.0) are separate values. They
+mean different things: importance is how much the user cares, confidence is
+how sure the system is that the content is true. Collapsing them into one
+"score" would hide that distinction; keeping them apart makes each queryable
+and each editable in the UI.
+
+Retrieval is deterministic and bounded. `MemoryContextProvider` wraps the
+existing conversation-history provider and, per turn, asks the store for a
+short list of candidates scoped to the principal, ranks them with
+`assistant_memory::rank` against the raw request text (text overlap,
+importance, confidence, 24-hour recency decay, prior usage), and injects at
+most `MAX_CONTEXT_MEMORIES` into the turn context as facts. The model never
+sees the whole memory set; the store enforces an upper bound (`MAX_SEARCH_LIMIT`)
+on the API too, so a client cannot pull the entire table with one call.
+
+Access tracking is explicit. `last_accessed_at` and `access_count` are moved
+only when the retrieval layer declares the memory "used" (returned in a
+turn's context) — not on every incidental read. That makes the counter mean
+something the ranker can trust; a scheme that bumped it on every SELECT
+would produce noise the moment the UI listed archives.
+
+Explicit memory bypasses the model. "Remember that I prefer concise answers."
+is parsed by `assistant_memory::parse_explicit_memory` on the deterministic
+router; the handler constructs a `NewMemory` with `explicit_user_input`
+provenance and hands it to the store. The turn skips the model entirely, so
+the user's phrasing is preserved verbatim and the outcome is testable in
+Rust.
+
+Secret-like content is refused before persistence. A small heuristic
+(`assistant_memory::looks_like_secret`) rejects obvious API keys, bearer
+tokens, PEM blobs, and long high-entropy alphanumeric runs. It is not a
+security control — a determined user can still paste a password — but it
+catches the common accidental case, and it fires in one place (the domain
+crate) so the API, the deterministic handler, and the store cannot drift.
+
+Conflict handling is `supersede`, not merge. A newer memory replaces an
+older one on request (either from the API's `supersedes` field or a store
+call), and the older row is marked `superseded_by = <new id>` with
+`lifecycle = 'superseded'`. Both `alice.old` and `bob.new` must belong to
+the same user; the store refuses cross-owner supersession with `NotFound`.
+Nothing here attempts semantic contradiction detection; that belongs to a
+later milestone.
+
+Temporary memories carry an `expires_at` and are archived on the retrieval
+path, not by a scheduler. A partial index on `(expires_at) where kind =
+'temporary' and lifecycle = 'active'` keeps the sweep cheap. This preserves
+the M7 rule "no new infrastructure": Postgres does the work `cron` would.
+
+**Consequences.** Adding a new memory kind or source is a migration (the
+database `check` constraint enumerates them) and a small enum change, not a
+config knob. The bounded retrieval keeps every model call's context cost
+predictable, so a growing memory set does not silently slow every turn. The
+supersede rule preserves history — an old preference is still queryable
+under the archived filter, and the UI can show what replaced it — so a
+future contradiction detector can operate on real chains instead of
+guessing what came before. And because the writer is always deterministic
+Rust, swapping model providers (Claude, OpenAI, Gemini) does not change
+what the memory database is willing to accept.
+
+Explicitly not built as part of M7: vector embeddings, a semantic search
+index, autonomous background extraction, cross-conversation summarisation,
+psychological profiling, and any scheduler or queue. Postgres text search
+(`tsvector` + a GIN index + `websearch_to_tsquery`) is enough for the
+baseline; embeddings can arrive when a real use case demands them, without
+touching this ADR's boundaries.

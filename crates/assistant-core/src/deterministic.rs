@@ -155,6 +155,83 @@ impl DeterministicHandler for AssistantStatusHandler {
     }
 }
 
+/// Answers `remember that ...` from code, without going near a model.
+///
+/// This is the explicit-memory path: a deterministic parser detects the
+/// instruction, the application constructs a [`assistant_memory::NewMemory`]
+/// with `explicit_user_input` provenance, and the store persists it. Secret-
+/// looking content is refused, not stored. The user sees a plain confirmation
+/// with no fabricated content.
+///
+/// A model is never asked whether to accept, and there is no path that lets
+/// model output arrive here as an "explicit" instruction: this handler reads
+/// the raw request text.
+pub struct RememberMemoryHandler {
+    store: Arc<dyn assistant_memory::MemoryStore>,
+}
+
+impl RememberMemoryHandler {
+    pub fn new(store: Arc<dyn assistant_memory::MemoryStore>) -> Self {
+        Self { store }
+    }
+}
+
+#[async_trait]
+impl DeterministicHandler for RememberMemoryHandler {
+    fn name(&self) -> &str {
+        "memory.remember"
+    }
+
+    fn matches(&self, input: &NormalizedInput) -> bool {
+        assistant_memory::parse_explicit_memory(&input.text).is_some()
+    }
+
+    async fn handle(
+        &self,
+        _input: &NormalizedInput,
+        request: &TurnRequest,
+        _context: &TurnContext,
+    ) -> Result<String, CoreError> {
+        let Some(instruction) = assistant_memory::parse_explicit_memory(&request.input) else {
+            // `matches` said yes and `handle` said no: fall through to the
+            // model rather than fabricate a confirmation for something we did
+            // not store.
+            return Err(CoreError::InvalidInput);
+        };
+
+        let new_memory = assistant_memory::NewMemory::explicit(
+            request.principal.user_id,
+            instruction.kind,
+            instruction.content.clone(),
+        );
+
+        match self.store.create(new_memory).await {
+            Ok(stored) => Ok(format!(
+                "Saved as {kind}: \"{content}\".",
+                kind = stored.kind.as_str(),
+                content = instruction.content
+            )),
+            Err(assistant_memory::MemoryError::SecretLike) => {
+                Ok("That looks like a credential, so I did not save it. \
+                 If you meant to store a preference or fact, rephrase it without the secret."
+                    .to_string())
+            }
+            Err(assistant_memory::MemoryError::Invalid(reason)) => {
+                Ok(format!("I could not save that memory: {reason}."))
+            }
+            Err(assistant_memory::MemoryError::NotFound(_)) => {
+                // A create call cannot produce NotFound. Treat as an internal
+                // fault rather than a user-safe outcome.
+                Err(CoreError::InvalidInput)
+            }
+            Err(assistant_memory::MemoryError::Backend(reason)) => {
+                tracing::warn!(%reason, "memory backend failure on explicit remember");
+                Ok("I could not save that memory just now. Please try again in a moment.".into())
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -220,6 +297,65 @@ mod tests {
             answer.contains("3 tools are registered"),
             "unexpected: {answer}"
         );
+    }
+
+    #[tokio::test]
+    async fn remember_handler_persists_the_stated_content_without_a_model() {
+        let store: Arc<dyn assistant_memory::MemoryStore> =
+            Arc::new(assistant_memory::InMemoryMemoryStore::new());
+        let handler = RememberMemoryHandler::new(store.clone());
+        let input = normalize("Remember that I prefer concise answers.").expect("accepted");
+        let request = TurnRequest::new(Uuid::new_v4(), dev_principal(), &input.text);
+        assert!(handler.matches(&input));
+
+        let answer = handler
+            .handle(&input, &request, &TurnContext::default())
+            .await
+            .expect("answered");
+        assert!(answer.contains("preference"), "unexpected: {answer}");
+        assert!(
+            answer.contains("I prefer concise answers"),
+            "unexpected: {answer}"
+        );
+
+        let hits = store
+            .search(assistant_memory::MemoryQuery::active(
+                request.principal.user_id,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].kind, assistant_memory::MemoryKind::Preference);
+        assert_eq!(
+            hits[0].provenance.source_kind,
+            assistant_memory::MemorySource::ExplicitUserInput
+        );
+    }
+
+    #[tokio::test]
+    async fn remember_handler_refuses_secret_like_content_and_does_not_store_it() {
+        let store: Arc<dyn assistant_memory::MemoryStore> =
+            Arc::new(assistant_memory::InMemoryMemoryStore::new());
+        let handler = RememberMemoryHandler::new(store.clone());
+        let text = "Remember that my api_key=abcdef1234567890abcdef1234567890";
+        let input = normalize(text).expect("accepted");
+        let request = TurnRequest::new(Uuid::new_v4(), dev_principal(), &input.text);
+        let answer = handler
+            .handle(&input, &request, &TurnContext::default())
+            .await
+            .expect("answered");
+        assert!(
+            answer.to_lowercase().contains("credential"),
+            "unexpected: {answer}"
+        );
+
+        let hits = store
+            .search(assistant_memory::MemoryQuery::active(
+                request.principal.user_id,
+            ))
+            .await
+            .unwrap();
+        assert!(hits.is_empty(), "secret content was persisted");
     }
 
     #[test]

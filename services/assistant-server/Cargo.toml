@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 assistant-auth.workspace = true
 assistant-core.workspace = true
+assistant-memory.workspace = true
 assistant-models = { workspace = true, features = ["openai"] }
 assistant-protocol.workspace = true
 assistant-tools.workspace = true

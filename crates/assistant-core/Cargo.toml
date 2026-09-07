@@ -14,6 +14,7 @@ testing = []
 [dependencies]
 # The core depends on interfaces, never on providers or integrations.
 assistant-auth.workspace = true
+assistant-memory.workspace = true
 assistant-models.workspace = true
 assistant-tools.workspace = true
 

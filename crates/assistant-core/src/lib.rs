@@ -35,7 +35,9 @@ pub mod testing;
 pub use actions::{
     ActionStore, ApprovalPolicy, ApprovalRequest, AuditEvent, ExecutionStatus, ToolExecution,
 };
-pub use context::{ContextProvider, EmptyContextProvider, InMemoryContextProvider};
+pub use context::{
+    ContextProvider, EmptyContextProvider, InMemoryContextProvider, MemoryContextProvider,
+};
 pub use conversation::{
     ContextWindow, Conversation, ConversationError, ConversationStore, MessageRole, NewMessage,
     StoredContextProvider, StoredMessage,

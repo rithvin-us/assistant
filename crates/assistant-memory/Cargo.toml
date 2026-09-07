@@ -1,6 +1,6 @@
 [package]
 name = "assistant-memory"
-description = "Memory domain types and the storage seam. No storage implementation yet."
+description = "Long-term memory domain: types, proposal boundary, ranking, and the MemoryStore seam."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,4 +11,8 @@ async-trait.workspace = true
 serde.workspace = true
 thiserror.workspace = true
 time.workspace = true
+tokio = { workspace = true, features = ["sync"] }
 uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

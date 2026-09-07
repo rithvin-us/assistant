@@ -21,6 +21,7 @@ import GmailScreen from "./screens/GmailScreen";
 import ClassroomScreen from "./screens/ClassroomScreen";
 import DriveScreen from "./screens/DriveScreen";
 import AcademicScreen from "./screens/AcademicScreen";
+import MemoryScreen from "./screens/MemoryScreen";
 import ConversationSheet from "./components/ConversationSheet";
 
 export type ScreenType =
@@ -34,7 +35,8 @@ export type ScreenType =
   | "gmail"
   | "classroom"
   | "drive"
-  | "academic";
+  | "academic"
+  | "memory";
 
 export default function App() {
   const [chatOpen, setChatOpen] = useState(false);
@@ -91,6 +93,9 @@ export default function App() {
           onBack={() => setCurrentScreen("home")}
           onOpenClassroom={() => setCurrentScreen("classroom")}
         />
+      )}
+      {currentScreen === "memory" && (
+        <MemoryScreen onBack={() => setCurrentScreen("home")} />
       )}
 
       {currentScreen === "home" && (

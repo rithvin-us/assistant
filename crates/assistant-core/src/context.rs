@@ -5,6 +5,8 @@
 //! accounts and documents will each become an implementation of this trait, and
 //! none of them requires an orchestrator change to plug in.
 
+use std::sync::Arc;
+
 use async_trait::async_trait;
 
 use crate::turn::{TurnContext, TurnRequest};
@@ -81,6 +83,102 @@ impl ContextProvider for InMemoryContextProvider {
                 .unwrap_or_default(),
             facts: Vec::new(),
         })
+    }
+}
+
+/// Bounded memory retrieval, plugged into an inner context provider.
+///
+/// The rule this type exists to enforce: **memory influences context, it does
+/// not replace it**. An inner provider (conversation history, or the empty
+/// default) still runs; this wraps it and appends up to a hard cap of ranked
+/// memories to the facts. The model never sees the whole memory set.
+///
+/// Retrieval is deterministic: the store is filtered on the authenticated
+/// principal, expired temporaries are swept, and the results are ranked by
+/// [`assistant_memory::rank`] against the raw request text. Nothing here
+/// consults a model to decide what to fetch.
+pub struct MemoryContextProvider {
+    inner: Arc<dyn ContextProvider>,
+    store: Arc<dyn assistant_memory::MemoryStore>,
+    /// Hard cap on injected memories per turn.
+    limit: usize,
+}
+
+impl MemoryContextProvider {
+    /// Wraps `inner` with a bounded memory retrieval pass.
+    ///
+    /// `limit` is clamped to [`assistant_memory::MAX_CONTEXT_MEMORIES`] so a
+    /// caller cannot silently widen the context window.
+    pub fn new(
+        inner: Arc<dyn ContextProvider>,
+        store: Arc<dyn assistant_memory::MemoryStore>,
+        limit: usize,
+    ) -> Self {
+        Self {
+            inner,
+            store,
+            limit: limit.min(assistant_memory::MAX_CONTEXT_MEMORIES),
+        }
+    }
+}
+
+#[async_trait]
+impl ContextProvider for MemoryContextProvider {
+    async fn assemble(&self, request: &TurnRequest) -> Result<TurnContext, ContextError> {
+        let mut context = self.inner.assemble(request).await?;
+
+        let user_id = request.principal.user_id;
+        let now = time::OffsetDateTime::now_utc();
+
+        // Expiring temporaries on the retrieval path keeps M7's promise
+        // (`sweep_expired` on read) with no scheduler.
+        let _ = self.store.sweep_expired(user_id, now).await;
+
+        let query = assistant_memory::MemoryQuery {
+            user_id,
+            kinds: Vec::new(),
+            lifecycles: vec![assistant_memory::Lifecycle::Active],
+            min_importance: None,
+            text: Some(request.input.clone()),
+            // Ask the store for a somewhat wider pool so the deterministic
+            // ranker below has room to sort, then cap at `self.limit`.
+            limit: (self.limit as u32 * 4).max(8),
+        };
+
+        let candidates = self
+            .store
+            .search(query)
+            .await
+            .map_err(|error| Box::new(error) as ContextError)?;
+        if candidates.is_empty() {
+            return Ok(context);
+        }
+
+        let ranked = assistant_memory::rank(&candidates, Some(request.input.as_str()), now);
+        let selected: Vec<assistant_memory::Memory> = ranked
+            .into_iter()
+            .take(self.limit)
+            .map(|scored| scored.memory)
+            .collect();
+        if selected.is_empty() {
+            return Ok(context);
+        }
+
+        // Register the retrieval as an access. `touch` moves `last_accessed_at`
+        // and increments `access_count`; incidental reads do not do this,
+        // which is what makes the counter meaningful.
+        let ids: Vec<uuid::Uuid> = selected.iter().map(|memory| memory.id).collect();
+        let _ = self.store.touch(user_id, &ids, now).await;
+
+        context.facts.extend(selected.into_iter().map(|memory| {
+            format!(
+                "[memory:{kind}] {content}",
+                kind = memory.kind.as_str(),
+                content = memory.content
+            )
+        }));
+
+        Ok(context)
     }
 }
 

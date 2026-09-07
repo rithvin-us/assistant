@@ -8,7 +8,7 @@
  */
 
 /** Must equal `assistant_protocol::PROTOCOL_VERSION`. */
-export const PROTOCOL_VERSION = 5;
+export const PROTOCOL_VERSION = 6;
 
 export type HealthStatus = "ok" | "degraded";
 
@@ -389,4 +389,79 @@ export interface AcademicSyncResult {
   tasks_created: number;
   tasks_updated: number;
   tasks_skipped_user_edited: number;
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 7 -- long-term memory
+// ---------------------------------------------------------------------------
+//
+// Mirrors the memory types at the end of `crates/assistant-protocol/src/lib.rs`.
+// The model may propose a memory; the server (deterministic Rust) is what
+// stores, ranks and updates it. Nothing on the wire lets a client claim
+// ownership of somebody else's memory.
+
+export type MemoryKind =
+  | "preference"
+  | "fact"
+  | "idea"
+  | "commitment"
+  | "project"
+  | "temporary";
+
+export type MemoryLifecycle = "active" | "archived" | "superseded";
+
+export type MemorySource =
+  | "explicit_user_input"
+  | "conversation"
+  | "task"
+  | "note"
+  | "idea"
+  | "project"
+  | "document"
+  | "external_source";
+
+export interface MemoryProvenance {
+  source_kind: MemorySource;
+  source_ref?: string | null;
+}
+
+export interface MemoryItem {
+  id: string;
+  user_id: string;
+  kind: MemoryKind;
+  lifecycle: MemoryLifecycle;
+  content: string;
+  /** 1..=5, higher is more important. */
+  importance: number;
+  /** 0..=1. Confidence, not importance. */
+  confidence: number;
+  provenance: MemoryProvenance;
+  /** Only meaningful when `kind === "temporary"`. */
+  expires_at?: string | null;
+  created_at: string;
+  updated_at: string;
+  last_accessed_at?: string | null;
+  access_count: number;
+  archived_at?: string | null;
+  superseded_by?: string | null;
+}
+
+export interface CreateMemoryRequest {
+  kind: MemoryKind;
+  content: string;
+  importance?: number;
+  confidence?: number;
+  source_kind?: MemorySource;
+  source_ref?: string;
+  expires_at?: string;
+  supersedes?: string;
+}
+
+export interface UpdateMemoryRequest {
+  kind?: MemoryKind;
+  content?: string;
+  importance?: number;
+  confidence?: number;
+  /** Set `null` to clear an expiry; omit to leave alone. */
+  expires_at?: string | null;
 }
