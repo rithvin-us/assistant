@@ -22,7 +22,6 @@ import MailOutlineRoundedIcon from "@mui/icons-material/MailOutlineRounded";
 import GoogleIcon from "@mui/icons-material/Google";
 import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
 import CloudDoneOutlinedIcon from "@mui/icons-material/CloudDoneOutlined";
-import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 
 import type { ConnectionState } from "../api/bridge";
@@ -40,14 +39,6 @@ export default function MoreSheet({
   onSelectScreen: (screen: ScreenType) => void;
 }) {
   const FEATURES = [
-    {
-      icon: <GraphicEqRoundedIcon sx={{ color: "#7C3AED" }} />,
-      label: "Voice Assistant",
-      note: "Return to SiriWave voice interface",
-      enabled: true,
-      screen: "home" as ScreenType,
-      highlight: true,
-    },
     {
       icon: <DescriptionOutlinedIcon sx={{ color: "#2563EB" }} />,
       label: "Notes",
@@ -168,9 +159,9 @@ export default function MoreSheet({
               borderRadius: 2,
               mb: 0.5,
               py: 1,
-              bgcolor: feature.highlight ? "rgba(124, 58, 237, 0.06)" : "transparent",
+              bgcolor: "transparent",
               "&:hover": {
-                bgcolor: feature.highlight ? "rgba(124, 58, 237, 0.12)" : "#F5F5F5",
+                bgcolor: "#F5F5F5",
               },
             }}
           >
@@ -180,8 +171,8 @@ export default function MoreSheet({
                 <Typography
                   variant="body2"
                   sx={{
-                    fontWeight: feature.highlight ? 700 : 600,
-                    color: feature.highlight ? "#7C3AED" : "#202020",
+                    fontWeight: 600,
+                    color: "#202020",
                   }}
                 >
                   {feature.label}
