@@ -62,7 +62,7 @@ async fn probe_server(
         .http
         .get(format!("{}/v1/health", base_url.trim_end_matches('/')))
         .bearer_auth(&token)
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(30))
         .send()
         .await;
 

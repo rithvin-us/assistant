@@ -8,7 +8,7 @@
  * - Butter-smooth dual-canvas crossfade shader transitions
  */
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import Box from "@mui/material/Box";
 import IconButton from "@mui/material/IconButton";
 import Tooltip from "@mui/material/Tooltip";
@@ -59,15 +59,32 @@ export default function HomeScreen({
   const pointerStateAtDownRef = useRef<OrbState | null>(null);
   const voiceTurn = useVoiceTurn();
 
+  const refreshConnection = useCallback(() => {
+    setConnection(CHECKING);
+    void loadConnection().then((next) => {
+      setConnection(next);
+    });
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
-    void loadConnection().then((next) => {
+    const check = async () => {
+      const next = await loadConnection();
       if (!cancelled) setConnection(next);
-    });
+    };
+
+    void check();
+    // Poll more frequently (every 5s) when offline to quickly catch server wake-up from Render cold start
+    const intervalMs = connection.kind === "connected" ? 15000 : 5000;
+    const interval = setInterval(() => {
+      void check();
+    }, intervalMs);
+
     return () => {
       cancelled = true;
+      clearInterval(interval);
     };
-  }, []);
+  }, [connection.kind]);
 
   // The controller is authoritative while a turn is in flight. `activeVoiceState`
   // only covers what it does not own: holding to talk, and the initial connect.
@@ -462,8 +479,8 @@ export default function HomeScreen({
               <ChecklistRoundedIcon />
             </IconButton>
           )}
-          <Tooltip title={connection.kind === "offline" ? "Demo Mode (Offline Preview)" : connection.detail}>
-            <Box sx={{ display: "flex", alignItems: "center", gap: 0.75 }}>
+          <Tooltip title={connection.kind === "offline" ? "Demo Mode (Offline Preview) - Tap to retry" : connection.detail}>
+            <Box onClick={refreshConnection} sx={{ display: "flex", alignItems: "center", gap: 0.75, cursor: "pointer" }}>
               {connection.kind === "offline" && (
                 <Typography
                   variant="caption"
