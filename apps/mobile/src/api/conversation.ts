@@ -13,7 +13,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import { SERVER_BASE_URL, DEV_TOKEN, isTauri } from "./bridge";
+import { getServerBaseUrl, DEV_TOKEN, isTauri } from "./bridge";
 import type { ClientFrame, ServerFrame } from "./types";
 
 const FRAME_EVENT = "conversation://frame";
@@ -34,11 +34,12 @@ export async function openConversation(conversationId: string): Promise<void> {
     throw new Error("The assistant is only available in the app.");
   }
   await invoke("conversation_open", {
-    baseUrl: SERVER_BASE_URL,
+    baseUrl: getServerBaseUrl(),
     token: DEV_TOKEN,
     conversationId,
   });
 }
+
 
 export async function closeConversation(): Promise<void> {
   if (!isTauri) return;

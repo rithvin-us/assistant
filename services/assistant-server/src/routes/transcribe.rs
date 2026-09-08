@@ -50,19 +50,23 @@ pub async fn transcribe(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("audio/webm");
 
-    let is_gemini = state.gemini_api_key.is_some()
-        || state.openai_api_key.is_none()
-        || state
-            .openai_base_url
-            .as_deref()
-            .map(|u| u.contains("generativelanguage.googleapis.com"))
-            .unwrap_or(false)
-        || state.model.starts_with("gemini");
+    let is_custom_local = state
+        .openai_base_url
+        .as_deref()
+        .map(|u| !u.contains("generativelanguage.googleapis.com"))
+        .unwrap_or(false);
+
+    let is_gemini = !is_custom_local
+        && (state.gemini_api_key.is_some()
+            || (state.openai_api_key.is_none() && state.openai_base_url.is_none())
+            || state
+                .openai_base_url
+                .as_deref()
+                .map(|u| u.contains("generativelanguage.googleapis.com"))
+                .unwrap_or(false)
+            || state.model.starts_with("gemini"));
 
     // The credential has to match the endpoint the request is about to go to.
-    // This used to prefer `OPENAI_API_KEY` regardless and then send it to
-    // `generativelanguage.googleapis.com`, which Google rejects with
-    // `400 Please pass a valid API key`.
     let api_key = if is_gemini {
         state.gemini_api_key.as_deref().ok_or_else(|| {
             (
@@ -74,15 +78,22 @@ pub async fn transcribe(
             )
         })?
     } else {
-        state.openai_api_key.as_deref().ok_or_else(|| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ApiError {
-                    code: "openai_not_configured".into(),
-                    message: "OPENAI_API_KEY is not configured on the server.".into(),
-                }),
-            )
-        })?
+        match state.openai_api_key.as_deref() {
+            Some(key) => key,
+            None => {
+                if is_custom_local {
+                    "local-key"
+                } else {
+                    return Err((
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(ApiError {
+                            code: "openai_not_configured".into(),
+                            message: "OPENAI_API_KEY is not configured on the server.".into(),
+                        }),
+                    ));
+                }
+            }
+        }
     };
 
     if is_gemini {

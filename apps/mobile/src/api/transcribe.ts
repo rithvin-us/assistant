@@ -1,4 +1,4 @@
-import { SERVER_BASE_URL, DEV_TOKEN } from "./bridge";
+import { getServerBaseUrl, DEV_TOKEN } from "./bridge";
 import { VoiceRequestError } from "./voice";
 
 export interface TranscribeResult {
@@ -13,7 +13,8 @@ export async function transcribeAudio(
   /** Aborted when the turn is superseded or the user cancels. */
   signal?: AbortSignal,
 ): Promise<string> {
-  const url = `${SERVER_BASE_URL.replace(/\/+$/, "")}/v1/audio/transcribe`;
+  const url = `${getServerBaseUrl()}/v1/audio/transcribe`;
+
 
   const controller = new AbortController();
   const timer = setTimeout(
@@ -60,3 +61,85 @@ export async function transcribeAudio(
   const data = (await response.json()) as TranscribeResult;
   return data.text;
 }
+
+/**
+ * Local device fallback speech recognition using standard browser / WebKit Web Speech API.
+ * Operates 100% locally on device without needing external server credentials.
+ */
+export async function transcribeAudioLocal(signal?: AbortSignal): Promise<string> {
+  return new Promise((resolve, reject) => {
+    if (typeof window === "undefined") {
+      return reject(new VoiceRequestError("Local speech recognition unavailable", "voice_unconfigured"));
+    }
+
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognition) {
+      return reject(
+        new VoiceRequestError("Device does not support local SpeechRecognition", "voice_unconfigured"),
+      );
+    }
+
+    const recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.lang = "en-US";
+
+    let resolved = false;
+
+    const cleanup = () => {
+      signal?.removeEventListener("abort", onAbort);
+      try {
+        recognition.stop();
+      } catch {}
+    };
+
+    const onAbort = () => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        reject(new VoiceRequestError("Cancelled.", "voice_cancelled"));
+      }
+    };
+
+    signal?.addEventListener("abort", onAbort, { once: true });
+
+    recognition.onresult = (event: any) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      const text = event.results?.[0]?.[0]?.transcript || "";
+      resolve(text);
+    };
+
+    recognition.onerror = (event: any) => {
+      if (resolved) return;
+      resolved = true;
+      cleanup();
+      reject(new VoiceRequestError(`Local speech error: ${event.error}`, "voice_provider_error"));
+    };
+
+    recognition.onend = () => {
+      if (!resolved) {
+        resolved = true;
+        cleanup();
+        resolve("");
+      }
+    };
+
+    try {
+      recognition.start();
+    } catch (err: any) {
+      resolved = true;
+      cleanup();
+      reject(
+        new VoiceRequestError(
+          err?.message || "Failed to start local speech recognition",
+          "voice_provider_error",
+        ),
+      );
+    }
+  });
+}
+

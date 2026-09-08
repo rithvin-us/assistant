@@ -28,13 +28,34 @@ export const isTauri =
  * physical-device dev builds against a LAN address, or against a staging URL.
  */
 const PROD_SERVER_URL = "https://assistant-server-vbrv.onrender.com";
-const DEV_SERVER_URL = "http://127.0.0.1:8787";
+const DEV_SERVER_URL = "http://192.168.137.1:8787";
 
-const rawServerUrl =
+const defaultUrl =
   import.meta.env.VITE_SERVER_BASE_URL ??
   (import.meta.env.PROD ? PROD_SERVER_URL : DEV_SERVER_URL);
 
-export const SERVER_BASE_URL: string = rawServerUrl;
+
+export function getServerBaseUrl(): string {
+  if (typeof window !== "undefined") {
+    const saved = localStorage.getItem("ASSISTANT_SERVER_URL");
+    if (saved && saved.trim().length > 0) {
+      return saved.trim().replace(/\/+$/, "");
+    }
+  }
+  return defaultUrl.replace(/\/+$/, "");
+}
+
+export function setServerBaseUrl(url: string): void {
+  if (typeof window !== "undefined") {
+    if (url && url.trim().length > 0) {
+      localStorage.setItem("ASSISTANT_SERVER_URL", url.trim().replace(/\/+$/, ""));
+    } else {
+      localStorage.removeItem("ASSISTANT_SERVER_URL");
+    }
+  }
+}
+
+export const SERVER_BASE_URL: string = getServerBaseUrl();
 
 /**
  * Development bearer token. This is a placeholder credential for local work
@@ -42,8 +63,6 @@ export const SERVER_BASE_URL: string = rawServerUrl;
  * in the frontend bundle.
  */
 export const DEV_TOKEN: string = import.meta.env.VITE_DEV_AUTH_TOKEN ?? "local-dev-token";
-
-
 
 /** Narrows an unknown thrown value to something displayable. */
 function reasonFrom(error: unknown, fallback: string): string {
@@ -53,10 +72,11 @@ function reasonFrom(error: unknown, fallback: string): string {
 }
 
 export async function probeServer(): Promise<ProbeResult> {
+  const currentUrl = getServerBaseUrl();
   if (isTauri) {
     try {
       return await invoke<ProbeResult>("probe_server", {
-        baseUrl: SERVER_BASE_URL,
+        baseUrl: currentUrl,
         token: DEV_TOKEN,
       });
     } catch (error: unknown) {
@@ -66,7 +86,7 @@ export async function probeServer(): Promise<ProbeResult> {
 
   const start = performance.now();
   try {
-    const res = await fetch(`${SERVER_BASE_URL}/v1/health`, {
+    const res = await fetch(`${currentUrl}/v1/health`, {
       headers: DEV_TOKEN ? { Authorization: `Bearer ${DEV_TOKEN}` } : {},
     });
     const latencyMs = Math.round(performance.now() - start);
@@ -79,6 +99,7 @@ export async function probeServer(): Promise<ProbeResult> {
     return { state: "unreachable", reason: reasonFrom(error, "Server unreachable") };
   }
 }
+
 
 export async function localCacheReady(): Promise<boolean> {
   if (isTauri) {

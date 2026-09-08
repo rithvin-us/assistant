@@ -24,7 +24,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AudioPlaybackController, VoiceRequestError, speakVoiceText } from "../api/voice";
-import { transcribeAudio } from "../api/transcribe";
+import { transcribeAudio, transcribeAudioLocal } from "../api/transcribe";
 import { TurnFailedError, executeTurn } from "../api/conversation";
 import type { VoiceState } from "../api/types";
 
@@ -170,7 +170,18 @@ export function useVoiceTurn(): VoiceTurn {
     try {
       if (!live()) return;
       setState("transcribing");
-      const spoken = await transcribeAudio(audio, controller.signal);
+      let spoken: string | null = null;
+      try {
+        spoken = await transcribeAudio(audio, controller.signal);
+      } catch (err) {
+        console.warn("Server STT failed; activating native Web Speech API fallback", err);
+        try {
+          spoken = await transcribeAudioLocal(controller.signal);
+        } catch {
+          throw err;
+        }
+      }
+
       if (!live()) return;
 
       if (!spoken || spoken.trim().length === 0) {

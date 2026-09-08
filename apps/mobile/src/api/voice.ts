@@ -2,7 +2,7 @@
  * Voice API Client & WebAudio helper methods for M10.
  */
 
-import { SERVER_BASE_URL, DEV_TOKEN } from './bridge';
+import { getServerBaseUrl, DEV_TOKEN } from './bridge';
 
 export interface TranscribeResponse {
   text: string;
@@ -21,7 +21,8 @@ export interface VoiceDiagnosticResponse {
   status: string;
 }
 
-const BASE = () => `${SERVER_BASE_URL.replace(/\/+$/, '')}/v1/voice`;
+const BASE = () => `${getServerBaseUrl()}/v1/voice`;
+
 
 /**
  * Ceiling on a single voice request.
