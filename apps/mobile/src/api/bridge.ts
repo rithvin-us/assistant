@@ -27,13 +27,10 @@ export const isTauri =
  * `VITE_SERVER_BASE_URL` overrides both — set it in `apps/mobile/.env` for
  * physical-device dev builds against a LAN address, or against a staging URL.
  */
-const PROD_SERVER_URL = "https://assistant-server-vbrv.onrender.com";
-const DEV_SERVER_URL = "http://192.168.137.1:8787";
+export const PROD_SERVER_URL = "https://assistant-server-vbrv.onrender.com";
+export const DEV_SERVER_URL = "http://192.168.137.1:8787";
 
-const defaultUrl =
-  import.meta.env.VITE_SERVER_BASE_URL ??
-  (import.meta.env.PROD ? PROD_SERVER_URL : DEV_SERVER_URL);
-
+const defaultUrl = import.meta.env.VITE_SERVER_BASE_URL || PROD_SERVER_URL;
 
 export function getServerBaseUrl(): string {
   if (typeof window !== "undefined") {
@@ -47,8 +44,9 @@ export function getServerBaseUrl(): string {
 
 export function setServerBaseUrl(url: string): void {
   if (typeof window !== "undefined") {
-    if (url && url.trim().length > 0) {
-      localStorage.setItem("ASSISTANT_SERVER_URL", url.trim().replace(/\/+$/, ""));
+    const trimmed = url ? url.trim().replace(/\/+$/, "") : "";
+    if (trimmed && trimmed !== PROD_SERVER_URL) {
+      localStorage.setItem("ASSISTANT_SERVER_URL", trimmed);
     } else {
       localStorage.removeItem("ASSISTANT_SERVER_URL");
     }
