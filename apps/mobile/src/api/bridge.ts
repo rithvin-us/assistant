@@ -30,16 +30,18 @@ export const isTauri =
 export const PROD_SERVER_URL = "https://assistant-server-vbrv.onrender.com";
 export const DEV_SERVER_URL = "http://192.168.137.1:8787";
 
-const defaultUrl = import.meta.env.VITE_SERVER_BASE_URL || PROD_SERVER_URL;
-
 export function getServerBaseUrl(): string {
   if (typeof window !== "undefined") {
     const saved = localStorage.getItem("ASSISTANT_SERVER_URL");
+    if (saved && (saved.includes("192.168.137.1") || saved.includes("127.0.0.1") || saved.includes("localhost"))) {
+      localStorage.removeItem("ASSISTANT_SERVER_URL");
+      return import.meta.env.VITE_SERVER_BASE_URL || PROD_SERVER_URL;
+    }
     if (saved && saved.trim().length > 0) {
       return saved.trim().replace(/\/+$/, "");
     }
   }
-  return defaultUrl.replace(/\/+$/, "");
+  return import.meta.env.VITE_SERVER_BASE_URL || PROD_SERVER_URL;
 }
 
 export function setServerBaseUrl(url: string): void {
