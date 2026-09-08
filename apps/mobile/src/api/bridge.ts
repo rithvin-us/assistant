@@ -55,7 +55,23 @@ export function setServerBaseUrl(url: string): void {
   }
 }
 
+/**
+ * Returns true if the target server URL is a local network address or local dev environment.
+ * The pencil editor is only displayed when connecting to a local dev server.
+ */
+export function isLocalServer(url?: string): boolean {
+  const target = (url || getServerBaseUrl()).toLowerCase();
+  return (
+    target.startsWith("http://127.") ||
+    target.startsWith("http://localhost") ||
+    target.startsWith("http://192.168.") ||
+    target.startsWith("http://10.") ||
+    target.startsWith("http://0.0.0.0")
+  );
+}
+
 export const SERVER_BASE_URL: string = getServerBaseUrl();
+
 
 /**
  * Development bearer token. This is a placeholder credential for local work

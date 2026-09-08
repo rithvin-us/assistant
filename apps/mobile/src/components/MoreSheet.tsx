@@ -28,7 +28,7 @@ import { useState } from "react";
 import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
-import { getServerBaseUrl, setServerBaseUrl, type ConnectionState } from "../api/bridge";
+import { getServerBaseUrl, setServerBaseUrl, isLocalServer, type ConnectionState } from "../api/bridge";
 import type { ScreenType } from "../App";
 
 export default function MoreSheet({
@@ -44,12 +44,14 @@ export default function MoreSheet({
 }) {
   const [editingUrl, setEditingUrl] = useState(false);
   const [urlInput, setUrlInput] = useState(getServerBaseUrl());
+  const isLocal = isLocalServer();
 
   const handleSaveUrl = () => {
     setServerBaseUrl(urlInput);
     setEditingUrl(false);
     window.location.reload();
   };
+
 
   const FEATURES = [
     {
@@ -217,14 +219,16 @@ export default function MoreSheet({
             <Typography variant="caption" sx={{ color: "#888888", fontWeight: 600 }}>
               Server: {getServerBaseUrl()}
             </Typography>
-            <IconButton
-              size="small"
-              onClick={() => setEditingUrl(!editingUrl)}
-              sx={{ p: 0.25, color: "#7C3AED" }}
-              title="Edit Server URL"
-            >
-              <EditRoundedIcon sx={{ fontSize: 16 }} />
-            </IconButton>
+            {isLocal && (
+              <IconButton
+                size="small"
+                onClick={() => setEditingUrl(!editingUrl)}
+                sx={{ p: 0.25, color: "#7C3AED" }}
+                title="Edit Local Server URL"
+              >
+                <EditRoundedIcon sx={{ fontSize: 16 }} />
+              </IconButton>
+            )}
           </Box>
           <Chip
             size="small"
