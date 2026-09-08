@@ -65,10 +65,12 @@ export default function App() {
     <Box
       sx={{
         height: "100dvh",
+        width: "100%",
         bgcolor: "background.default",
-        px: currentScreen === "home" ? 3 : 0,
+        px: 0,
         pt: "env(safe-area-inset-top)",
         pb: "env(safe-area-inset-bottom)",
+        overflowX: "hidden",
       }}
     >
       <ScreenTransition screenKey={currentScreen} back={currentScreen === "home"}>

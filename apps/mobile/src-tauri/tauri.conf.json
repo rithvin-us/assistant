@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "com.rithvin.assistant",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "npm --prefix apps/mobile run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "npm --prefix apps/mobile run build",
     "frontendDist": "../dist"
   },
   "app": {

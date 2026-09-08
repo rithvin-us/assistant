@@ -416,6 +416,9 @@ export default function HomeScreen({
     <Box
       sx={{
         height: "100%",
+        width: "100%",
+        maxWidth: 500,
+        mx: "auto",
         display: "grid",
         gridTemplateRows: "auto 1fr auto",
         justifyItems: "center",
@@ -423,6 +426,7 @@ export default function HomeScreen({
         userSelect: "none",
         WebkitUserSelect: "none",
         px: 2,
+        boxSizing: "border-box",
       }}
     >
       {/* Header */}

@@ -34,10 +34,18 @@ export const theme = createTheme({
   components: {
     MuiCssBaseline: {
       styleOverrides: `
+        html, body, #root {
+          margin: 0;
+          padding: 0;
+          width: 100%;
+          height: 100%;
+          overflow-x: hidden;
+        }
         * {
           -webkit-tap-highlight-color: transparent !important;
           -webkit-touch-callout: none !important;
           outline: none !important;
+          box-sizing: border-box;
         }
         *:focus, *:focus-visible, *:active {
           outline: none !important;
