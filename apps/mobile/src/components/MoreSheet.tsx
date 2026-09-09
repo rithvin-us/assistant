@@ -28,7 +28,14 @@ import { useState } from "react";
 import TextField from "@mui/material/TextField";
 import Button from "@mui/material/Button";
 import EditRoundedIcon from "@mui/icons-material/EditRounded";
-import { getServerBaseUrl, setServerBaseUrl, isLocalServer, type ConnectionState } from "../api/bridge";
+import {
+  getServerBaseUrl,
+  setServerBaseUrl,
+  isLocalServer,
+  PROD_SERVER_URL,
+  DEV_SERVER_URL,
+  type ConnectionState,
+} from "../api/bridge";
 import type { ScreenType } from "../App";
 
 export default function MoreSheet({
@@ -240,18 +247,46 @@ export default function MoreSheet({
         </Box>
 
         {editingUrl && (
-          <Box sx={{ display: "flex", gap: 1, mt: 1 }}>
-            <TextField
-              size="small"
-              fullWidth
-              value={urlInput}
-              onChange={(e) => setUrlInput(e.target.value)}
-              placeholder="http://192.168.137.1:8787"
-              sx={{ "& input": { fontSize: "0.85rem", py: 0.75 } }}
-            />
-            <Button variant="contained" size="small" onClick={handleSaveUrl} sx={{ bgcolor: "#7C3AED" }}>
-              Save
-            </Button>
+          <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mt: 1 }}>
+            <Box sx={{ display: "flex", gap: 1 }}>
+              <TextField
+                size="small"
+                fullWidth
+                value={urlInput}
+                onChange={(e) => setUrlInput(e.target.value)}
+                placeholder="http://192.168.137.1:8787"
+                sx={{ "& input": { fontSize: "0.85rem", py: 0.75 } }}
+              />
+              <Button variant="contained" size="small" onClick={handleSaveUrl} sx={{ bgcolor: "#7C3AED" }}>
+                Save
+              </Button>
+            </Box>
+            <Box sx={{ display: "flex", gap: 1 }}>
+              <Button
+                variant="outlined"
+                size="small"
+                fullWidth
+                onClick={() => {
+                  setServerBaseUrl(PROD_SERVER_URL);
+                  window.location.reload();
+                }}
+                sx={{ fontSize: "0.75rem" }}
+              >
+                Use Cloud Server
+              </Button>
+              <Button
+                variant="outlined"
+                size="small"
+                fullWidth
+                onClick={() => {
+                  setServerBaseUrl(DEV_SERVER_URL);
+                  window.location.reload();
+                }}
+                sx={{ fontSize: "0.75rem" }}
+              >
+                Use Local Host
+              </Button>
+            </Box>
           </Box>
         )}
 

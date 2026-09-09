@@ -83,10 +83,12 @@ export async function transcribeAudioLocal(signal?: AbortSignal): Promise<string
 
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
-    recognition.interimResults = false;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
     recognition.lang = "en-US";
 
     let resolved = false;
+    let accumulatedText = "";
 
     const cleanup = () => {
       signal?.removeEventListener("abort", onAbort);
@@ -106,11 +108,23 @@ export async function transcribeAudioLocal(signal?: AbortSignal): Promise<string
     signal?.addEventListener("abort", onAbort, { once: true });
 
     recognition.onresult = (event: any) => {
-      if (resolved) return;
-      resolved = true;
-      cleanup();
-      const text = event.results?.[0]?.[0]?.transcript || "";
-      resolve(text);
+      let interimText = "";
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        const item = event.results[i];
+        if (item.isFinal) {
+          accumulatedText += item[0].transcript;
+        } else {
+          interimText += item[0].transcript;
+        }
+      }
+      const current = (accumulatedText || interimText).trim();
+      if (current && event.results[event.results.length - 1]?.isFinal) {
+        if (!resolved) {
+          resolved = true;
+          cleanup();
+          resolve(current);
+        }
+      }
     };
 
     recognition.onerror = (event: any) => {
