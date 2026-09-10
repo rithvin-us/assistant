@@ -173,7 +173,9 @@ impl DriveProvider for GoogleClient {
         mime_type: Option<&str>,
         limit: u32,
     ) -> Result<Vec<DriveFile>, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("drive.readonly"))
+            .await?;
 
         let mut q = String::from("trashed = false");
         if !query.trim().is_empty() {
@@ -199,7 +201,9 @@ impl DriveProvider for GoogleClient {
         folder_id: Option<&str>,
         limit: u32,
     ) -> Result<Vec<DriveFile>, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("drive.readonly"))
+            .await?;
 
         let parent = folder_id.filter(|f| !f.trim().is_empty()).unwrap_or("root");
         let q = format!(
@@ -216,7 +220,9 @@ impl DriveProvider for GoogleClient {
         user_id: Uuid,
         file_id: &str,
     ) -> Result<DriveFile, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("drive.readonly"))
+            .await?;
 
         let url = format!(
             "{API_BASE}/files/{}?fields={}&supportsAllDrives=true",
@@ -261,7 +267,9 @@ impl DriveProvider for GoogleClient {
             ));
         }
 
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("drive.readonly"))
+            .await?;
 
         let url = if let Some(target) = export_mime(&meta.mime_type) {
             // Native Google documents report no size, so the ceiling cannot be
@@ -377,7 +385,9 @@ pub async fn download_document_bytes(
         )));
     }
 
-    let token = client.get_access_token(user_id, account_id).await?;
+    let token = client
+        .get_access_token_with_required_scope(user_id, account_id, Some("drive.readonly"))
+        .await?;
     let url = format!("{API_BASE}/files/{}?alt=media", url_encode(file_id));
     let resp = client
         .http

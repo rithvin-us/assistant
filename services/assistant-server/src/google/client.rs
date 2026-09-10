@@ -68,6 +68,47 @@ pub const CLASSROOM_SCOPES: &[&str] = &[
 
 pub const DRIVE_SCOPES: &[&str] = &[DRIVE_READONLY_SCOPE];
 
+/// Expands and normalizes raw Google OAuth scopes into the short canonical
+/// names expected by tool declarations (`ToolSpec::required_scopes`).
+///
+/// Strips "https://www.googleapis.com/auth/" and accounts for scope implications:
+/// - `calendar.events` and `calendar` grant both `calendar.events` and `calendar.readonly`
+/// - `gmail.modify` and `https://mail.google.com/` grant both `gmail.readonly` and `gmail.send`
+/// - `drive` grants `drive.readonly`
+/// - `classroom.coursework.students.readonly` grants `classroom.coursework.me.readonly`
+pub fn expand_google_scopes(raw_scopes: &[String]) -> Vec<String> {
+    let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for scope in raw_scopes {
+        let s = scope.trim();
+        if s.is_empty() {
+            continue;
+        }
+        set.insert(s.to_string());
+        let short = s
+            .strip_prefix("https://www.googleapis.com/auth/")
+            .unwrap_or(s);
+        set.insert(short.to_string());
+
+        if short == "calendar.events" || short == "calendar" {
+            set.insert("calendar.readonly".to_string());
+            set.insert("calendar.events".to_string());
+        }
+        if short == "gmail.modify" || s == "https://mail.google.com/" {
+            set.insert("gmail.readonly".to_string());
+            set.insert("gmail.send".to_string());
+        }
+        if short == "drive" {
+            set.insert("drive.readonly".to_string());
+        }
+        if short == "classroom.coursework.students.readonly" {
+            set.insert("classroom.coursework.me.readonly".to_string());
+        }
+    }
+    let mut result: Vec<String> = set.into_iter().collect();
+    result.sort();
+    result
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct StoredGoogleTokens {
     pub access_token: String,
@@ -371,14 +412,31 @@ impl GoogleClient {
     }
 
     /// Retrieves an unexpired access token, transparently refreshing if expired.
+    #[allow(dead_code)]
     pub(super) async fn get_access_token(
         &self,
         user_id: Uuid,
         account_id: Uuid,
     ) -> Result<String, ToolError> {
+        self.get_access_token_with_required_scope(user_id, account_id, None)
+            .await
+    }
+
+    /// Retrieves an unexpired access token for a specific account, verifying that
+    /// the targeted account itself holds `required_scope`.
+    ///
+    /// Multi-account isolation: User A may have Account 1 (with Gmail) and Account 2
+    /// (with Classroom). An operation targeting Account 2 cannot borrow Account 1's
+    /// permissions, and vice versa.
+    pub(super) async fn get_access_token_with_required_scope(
+        &self,
+        user_id: Uuid,
+        account_id: Uuid,
+        required_scope: Option<&str>,
+    ) -> Result<String, ToolError> {
         let row = sqlx::query(
             r#"
-            SELECT id, encrypted_credentials, status
+            SELECT id, encrypted_credentials, status, scopes
             FROM connected_accounts
             WHERE id = $1 AND user_id = $2 AND provider = 'google'
             "#,
@@ -400,6 +458,16 @@ impl GoogleClient {
             return Err(ToolError::Failed(format!(
                 "Account {account_id} is in status '{status}'"
             )));
+        }
+
+        if let Some(req_scope) = required_scope {
+            let account_scopes: Vec<String> = row.get("scopes");
+            let expanded = expand_google_scopes(&account_scopes);
+            if !expanded.iter().any(|s| s == req_scope) {
+                return Err(ToolError::Failed(format!(
+                    "Account {account_id} does not have required scope '{req_scope}'"
+                )));
+            }
         }
 
         let encrypted: Vec<u8> = row.get("encrypted_credentials");
@@ -507,7 +575,9 @@ impl GmailProvider for GoogleClient {
         query: &str,
         limit: u32,
     ) -> Result<Vec<EmailSummary>, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("gmail.readonly"))
+            .await?;
         let max_results = limit.clamp(1, 50);
 
         let url = format!(
@@ -641,7 +711,9 @@ impl GmailProvider for GoogleClient {
         user_id: Uuid,
         message_id: &str,
     ) -> Result<EmailDetail, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("gmail.readonly"))
+            .await?;
 
         let url = format!(
             "https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}?format=full"
@@ -776,7 +848,9 @@ impl CalendarProvider for GoogleClient {
         start: OffsetDateTime,
         end: OffsetDateTime,
     ) -> Result<Vec<CalendarEvent>, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("calendar.readonly"))
+            .await?;
 
         let time_min_str = start
             .format(&Rfc3339)
@@ -836,7 +910,9 @@ impl CalendarProvider for GoogleClient {
         user_id: Uuid,
         query: &str,
     ) -> Result<Vec<CalendarEvent>, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("calendar.readonly"))
+            .await?;
 
         let url = format!(
             "https://www.googleapis.com/calendar/v3/calendars/primary/events?\
@@ -885,7 +961,9 @@ impl CalendarProvider for GoogleClient {
         user_id: Uuid,
         event: CreateCalendarEvent,
     ) -> Result<CalendarEvent, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("calendar.events"))
+            .await?;
 
         let start_str = event
             .start_time
@@ -936,7 +1014,9 @@ impl CalendarProvider for GoogleClient {
         event_id: &str,
         event: UpdateCalendarEvent,
     ) -> Result<CalendarEvent, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("calendar.events"))
+            .await?;
 
         let mut body = serde_json::Map::new();
         if let Some(ref title) = event.title {
@@ -998,7 +1078,9 @@ impl CalendarProvider for GoogleClient {
         user_id: Uuid,
         event_id: &str,
     ) -> Result<(), ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(user_id, account_id, Some("calendar.events"))
+            .await?;
 
         let url =
             format!("https://www.googleapis.com/calendar/v3/calendars/primary/events/{event_id}");
