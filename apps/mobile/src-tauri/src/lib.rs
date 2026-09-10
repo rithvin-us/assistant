@@ -137,6 +137,20 @@ fn local_cache_ready(state: tauri::State<'_, Shell>) -> bool {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Install aws-lc-rs as the process-wide rustls crypto provider.
+    //
+    // `tokio_tungstenite` builds its TLS config with
+    // `rustls::ClientConfig::builder()`, which calls
+    // `CryptoProvider::get_default()`. Without this call the provider is
+    // `None` and every `wss://` connection logs
+    //   "Call CryptoProvider::install_default() before this point"
+    // and then fails — so the conversation WebSocket never opens and the
+    // AI turn appears to hang forever. The `http_client()` below already
+    // passes the provider in explicitly; this covers tokio_tungstenite.
+    // Installing twice is harmless: the second call returns `Err` and we
+    // ignore it.
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
