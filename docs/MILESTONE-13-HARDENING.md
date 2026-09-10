@@ -198,12 +198,17 @@ forwarded to the upstream provider; productivity list routes have no
 deleting a user leaves them dangling. `0011`'s `planning_preferences` has no FK
 either, and its `auth.uid()` RLS policy is dead code under the ADR-0023 model.
 
-**L5 — LOW — Flaky rate-limit test.**
-`voice_security::repeated_requests_are_rate_limited_per_principal` drives 40
-requests against a 30-per-60s window while `/v1/voice/speak` makes a real
-network call to `translate.google.com`, so under full-suite parallel load the
-window can roll before the limit trips. Observed failing once at 173s, passing
-isolated at 15s. Pre-existing.
+**L5 — LOW — Flaky rate-limit test. FIXED.**
+`voice_security::repeated_requests_are_rate_limited_per_principal` drove 40
+requests *sequentially* against a 30-per-60s window, and each of the first 30 was
+allowed through to a real TTS call — which, with no Cartesia key configured,
+means a live request to Google's translate endpoint. Under full-suite parallel
+load those 30 took longer than the window, so it reopened before the 31st
+arrived and the limit never tripped. The test failed for a reason unrelated to
+what it tested. Observed failing at 173s, passing isolated at 15s. Now sent
+concurrently, which bounds wall time by the slowest single request rather than
+the sum of thirty: three consecutive runs at 10.9s, 1.3s and 0.97s, all passing.
+Test-only change; no production behaviour was altered.
 
 **L6 — LOW — Shared `reqwest::Client` sets only `connect_timeout`** — no total
 or read timeout, default 10-redirect policy. A slow or redirect-looping upstream

@@ -217,23 +217,33 @@ async fn repeated_requests_are_rate_limited_per_principal() {
 
     // The limit is 30 per minute per bucket. Drive past it and the endpoint must
     // refuse rather than forwarding every one to a paid provider.
-    let mut refused = None;
-    for _ in 0..40 {
-        let res = client()
-            .post(format!("http://{addr}/v1/voice/speak"))
-            .header("Authorization", format!("Bearer {TEST_TOKEN}"))
-            .json(&serde_json::json!({ "text": "hello" }))
-            .send()
-            .await
-            .expect("request sent");
-
-        if res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            refused = Some(res);
-            break;
+    //
+    // Sent concurrently, deliberately. Sequentially, the first 30 requests are
+    // each allowed through to a real TTS call, and when no Cartesia key is
+    // configured that means a live request to Google's translate endpoint. Under
+    // parallel test load 30 of those took longer than the 60-second window, so
+    // the window reopened before the 31st arrived and the limit never tripped --
+    // a test that failed for a reason that had nothing to do with what it was
+    // testing. Concurrency bounds the wall time by the slowest single request
+    // rather than the sum of thirty.
+    let responses = futures::future::join_all((0..40).map(|_| {
+        let url = format!("http://{addr}/v1/voice/speak");
+        async move {
+            client()
+                .post(url)
+                .header("Authorization", format!("Bearer {TEST_TOKEN}"))
+                .json(&serde_json::json!({ "text": "hello" }))
+                .send()
+                .await
+                .expect("request sent")
         }
-    }
+    }))
+    .await;
 
-    let res = refused.expect("the endpoint never refused within 40 requests");
+    let res = responses
+        .into_iter()
+        .find(|res| res.status() == reqwest::StatusCode::TOO_MANY_REQUESTS)
+        .expect("the endpoint never refused within 40 requests");
     let err: serde_json::Value = res.json().await.expect("error body");
     assert_eq!(err["code"], "rate_limited");
 }
