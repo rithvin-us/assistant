@@ -1,0 +1,65 @@
+# Keeps the deployed server from spinning down.
+#
+# The Render free plan stops an instance after roughly fifteen minutes without
+# traffic, and the next request then pays a cold start: container boot, a fresh
+# Postgres connection, and the first model call on a 0.15-CPU allowance. Measured
+# against this service that is fifty seconds or more.
+#
+# That is longer than the mobile client's own turn timeout, so a voice turn
+# aimed at a sleeping instance is abandoned before any audio comes back. The
+# user sees the assistant silently do nothing, which reads as a broken app
+# rather than a sleeping server.
+#
+# Pinging /v1/health more often than the idle window keeps the instance up. The
+# endpoint is public and cheap by design, and it is a liveness probe rather than
+# the readiness one, so this does not depend on the database being reachable.
+#
+# This is a workaround for a plan limit, not a fix. A paid instance does not
+# spin down and does not need this file. GitHub's scheduled runners are also
+# best-effort and drift under load, so treat the interval as approximate.
+name: keep-warm
+
+on:
+  schedule:
+    # Every ten minutes, comfortably inside the idle window.
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+# Nothing is checked out and nothing is published: the job only makes an
+# outbound request.
+permissions:
+  contents: read
+
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping the health endpoint
+        env:
+          # Public URL, not a secret. Overridable so a fork or a second
+          # environment does not have to edit the workflow.
+          SERVER_URL: ${{ vars.SERVER_URL || 'https://assistant-server-vbrv.onrender.com' }}
+        run: |
+          set -uo pipefail
+          # A cold start is the case this exists for, so the timeout has to be
+          # longer than one. Retry rather than fail on the first slow wake-up.
+          for attempt in 1 2 3; do
+            code=$(curl -sS -o /tmp/health.json -w '%{http_code}' \
+              --max-time 90 "${SERVER_URL}/v1/health" || echo "000")
+            if [ "$code" = "200" ]; then
+              echo "awake (attempt ${attempt}): $(cat /tmp/health.json)"
+              exit 0
+            fi
+            echo "attempt ${attempt} returned ${code}; retrying"
+            sleep 15
+          done
+          echo "::warning::server did not return 200 after 3 attempts"
+          # Deliberately not a failure. This job exists to keep the instance
+          # warm, and a red cross every time Render or GitHub has a bad minute
+          # would train everyone to ignore it.
+          exit 0
