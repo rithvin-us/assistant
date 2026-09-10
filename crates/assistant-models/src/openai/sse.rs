@@ -187,7 +187,7 @@ impl SseDecoder {
             if let Some(tc) = self.tool_calls.remove(&key)
                 && !tc.name.is_empty()
             {
-                let args: Value = serde_json::from_str(&tc.arguments).unwrap_or(Value::Null);
+                let args: Value = super::wire::parse_tool_arguments(&tc.arguments);
                 out.push_back(Ok(StreamChunk::ToolCall(ToolCall {
                     id: tc.id,
                     name: tc.name,

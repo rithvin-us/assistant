@@ -233,7 +233,7 @@ pub(super) fn parse_response(
         .unwrap_or_default()
         .into_iter()
         .map(|tc| {
-            let args: Value = serde_json::from_str(&tc.function.arguments).unwrap_or(Value::Null);
+            let args: Value = parse_tool_arguments(&tc.function.arguments);
             ToolCall {
                 id: tc.id,
                 name: tc.function.name,
@@ -252,6 +252,24 @@ pub(super) fn parse_response(
         .unwrap_or_default();
 
     Ok((choice.message.content, tool_calls, usage))
+}
+
+/// Parses the `arguments` string of a tool call into a JSON value.
+///
+/// A provider that has no arguments to send may send an empty string rather
+/// than `"{}"` -- Gemini's OpenAI-compatible endpoint does exactly this for a
+/// tool that takes no parameters. Parsing that as `Null` and then rejecting it
+/// for not being an object turned "call this no-argument tool" into a failed
+/// turn, which is what `classroom.courses` and `gmail.search` were hitting in
+/// production.
+///
+/// An absent argument list means an empty one. Genuinely malformed JSON still
+/// becomes `Null`, so the structural check downstream keeps catching it.
+pub(crate) fn parse_tool_arguments(raw: &str) -> Value {
+    if raw.trim().is_empty() {
+        return Value::Object(serde_json::Map::new());
+    }
+    serde_json::from_str(raw).unwrap_or(Value::Null)
 }
 
 #[cfg(test)]
@@ -354,5 +372,51 @@ mod tests {
             calls[0].provider_metadata,
             Some(serde_json::json!({"google": {"thought_signature": "abc123"}}))
         );
+    }
+}
+
+#[cfg(test)]
+mod tool_argument_tests {
+    use super::*;
+
+    /// The production regression. Gemini's OpenAI-compatible endpoint sends an
+    /// empty `arguments` string for a tool that takes no parameters. That
+    /// parsed to `Null`, failed the "arguments must be a JSON object" check,
+    /// and aborted the whole turn -- observed live against `classroom.courses`
+    /// and `gmail.search`.
+    #[test]
+    fn an_empty_argument_string_is_an_empty_object() {
+        for raw in ["", "   ", "\n", "\t"] {
+            let parsed = parse_tool_arguments(raw);
+            assert!(
+                parsed.is_object(),
+                "empty arguments must mean no arguments, got {parsed:?} for {raw:?}"
+            );
+            assert_eq!(parsed.as_object().expect("object").len(), 0);
+        }
+    }
+
+    #[test]
+    fn a_real_argument_object_is_preserved() {
+        let parsed = parse_tool_arguments(r#"{"query":"from:me","limit":5}"#);
+        assert_eq!(parsed["query"], "from:me");
+        assert_eq!(parsed["limit"], 5);
+    }
+
+    #[test]
+    fn an_explicit_empty_object_still_works() {
+        assert!(parse_tool_arguments("{}").is_object());
+    }
+
+    /// Genuinely malformed JSON must still be rejected downstream, so it keeps
+    /// returning a non-object rather than being quietly turned into `{}`.
+    #[test]
+    fn malformed_json_is_not_silently_accepted() {
+        for raw in ["{not json", "[1,2,3]", "\"a string\"", "42"] {
+            assert!(
+                !parse_tool_arguments(raw).is_object(),
+                "malformed arguments must not become an object: {raw:?}"
+            );
+        }
     }
 }
