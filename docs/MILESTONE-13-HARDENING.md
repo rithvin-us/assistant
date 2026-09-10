@@ -324,6 +324,66 @@ will not boot until they are set.** `render.yaml`'s `healthCheckPath` is
 deliberately left at `/v1/health` rather than `/v1/ready`, so a database outage
 does not by itself fail a deploy.
 
+## 6b. Deployed environment audit (Render)
+
+Read from the service's own boot logs, which print the resolved `Config` with
+secrets redacted, plus live probes. Service `assistant-server`
+(`srv-daepksf40ujc7387pg60`), region singapore, free plan, **autoDeploy on
+`main`**, `healthCheckPath: /v1/health`.
+
+| Variable | State at audit | Verdict |
+|---|---|---|
+| `SUPABASE_PROJECT_REF` | `None` on all three boots | caused C1 |
+| `DATABASE_URL` | set, connection failing | no persistence |
+| `CREDENTIAL_ENCRYPTION_KEY` | `Some` | set, so C2's fallback was **not** active in production |
+| `GOOGLE_REDIRECT_URI` | `.../api/google/oauth/callback` | 404s; no such route |
+| `OPENAI_API_KEY` | `None` | fine, Gemini is the configured provider |
+| `ASSISTANT_ALLOWED_ORIGINS` | localhost + tauri schemes | fine |
+| `DEV_AUTH_TOKEN` | was `local-dev-token` | public value; rotated |
+
+**C2 correction.** `credential_encryption_key` is `Some` in every boot log, so
+the hardcoded fallback key was not in use in production. The defect in the code
+was real and is fixed, but the deployed blast radius was smaller than first
+reported. Whether the configured value actually *parses* cannot be told from a
+redacted log: if it were malformed, the old code would have silently used the
+fallback anyway. After ADR-0039 a malformed value refuses to boot, which settles
+the question on the next deploy.
+
+**The database is misconfigured, and failed two different ways within two
+hours** — the value was changed between boots:
+
+    13:08  prepared statement "sqlx_s_1" already exists
+    14:38  Network is unreachable (os error 101)
+
+These are the two standard Supabase-on-Render failures. The first is the
+transaction pooler on port 6543: PgBouncer in transaction mode cannot serve
+sqlx's prepared statements. The second is the direct connection
+(`db.<ref>.supabase.co:5432`), which is IPv6-only, against a Render free
+instance that has no IPv6 egress. The working configuration is the **session
+pooler** — `aws-1-<region>.pooler.supabase.com:5432`, user
+`postgres.<project_ref>` — which is reachable over IPv4 and, being session mode,
+supports prepared statements. There are no Render Postgres instances in the
+account, so Supabase is the only candidate target.
+
+**`GOOGLE_REDIRECT_URI` pointed at a route that does not exist.** Live check:
+`/api/google/oauth/callback` returns 404, `/v1/auth/google/callback` returns 200.
+Google account connection could not have completed. Corrected on the service;
+the same URI must also be updated in the Google Cloud console's authorised
+redirect URIs, which is not something this repository controls.
+
+**Actions taken on the deployed service during M13:** `DEV_AUTH_TOKEN` rotated
+to a 64-character random value, `ASSISTANT_ALLOW_DEV_AUTH=true` set explicitly,
+`GOOGLE_REDIRECT_URI` corrected. Verified afterwards: `local-dev-token` now
+returns 401 where it previously returned 200. The bypass is closed.
+
+**Deliberate choice recorded:** production stays on the development verifier for
+now, because the mobile app contains no sign-in code at all — switching on
+Supabase JWT verification would leave the app unable to authenticate. Dev auth
+with a rotated, non-guessable secret closes the exposure without bricking the
+client. It does **not** restore per-user identity: every caller is still one
+fixed user. Real authentication needs a login screen, and that is a milestone,
+not a configuration change.
+
 ## 7. NOT VERIFIED
 
 - **Remote database schema.** Cannot be confirmed from the repository. The
