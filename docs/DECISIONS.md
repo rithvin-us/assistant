@@ -1710,3 +1710,97 @@ the service to a new hostname is a shell rebuild, not a runtime config change,
 which matches how `webpki-roots` already bakes the trust anchors (ADR-0031).
 `VITE_DEV_AUTH_TOKEN` still has to match the server's `DEV_AUTH_TOKEN`; a
 mismatch surfaces as 401s from every protected route, not as "unreachable".
+
+---
+
+## ADR-0039 — An insecure development default must be asked for, and is refused otherwise
+
+**Decision.** `assistant-server` refuses to start when it would otherwise fall
+back to a development-only security default. The two such defaults —
+`DevTokenVerifier` and the hardcoded credential encryption key — are reachable
+only when the operator sets `ASSISTANT_ALLOW_DEV_AUTH=true`. A malformed
+`CREDENTIAL_ENCRYPTION_KEY` is a startup error whether or not the opt-in is set.
+
+**Context.** ADR-0024 replaced the static bearer token with a Supabase ES256 JWT
+and stated that `DevTokenVerifier` "is now selected explicitly rather than by
+default, so shipping it takes a deliberate act." The code did not implement
+that. `lib.rs` selected the verifier on `config.supabase_project_ref.is_none()`,
+and `config.rs` mapped an unset *or whitespace-only* `SUPABASE_PROJECT_REF` to
+`None`. Omitting one environment variable therefore downgraded the whole server
+to a shared static token, with a `warn!` line as the only signal.
+
+That is not hypothetical. `render.yaml` provisions `DEV_AUTH_TOKEN` and never
+mentions `SUPABASE_PROJECT_REF`, so the deployed service ran the development
+verifier. During the M13 audit the deployed server answered
+`GET /v1/google/accounts` with HTTP 200 for the bearer token `local-dev-token`
+— the hardcoded fallback in `apps/mobile/src/api/bridge.ts`, which Vite inlines
+into the shipped bundle. Every caller presenting that string authenticated as
+the single constant `DevTokenVerifier::DEV_USER_ID`, so every `where user_id =
+$1` predicate in the system was comparing against one hardcoded value.
+
+`Config::resolved_encryption_key` had the same shape and a sharper edge: it
+returned the literal `dev_credential_key_32_bytes_ok!!` — a constant in public
+source — whenever `CREDENTIAL_ENCRYPTION_KEY` was unset *or* failed to parse.
+That key seals the OAuth `state` parameter validated by the unauthenticated
+`/v1/auth/google/callback` route and encrypts stored Google refresh tokens, so
+falling back to it lets an attacker forge a `state` naming any `user_id`.
+Silently accepting a malformed value is worse than accepting none: the operator
+sets the variable, sees a running server, and believes it took effect.
+
+**Options.**
+
+1. Keep the fallbacks, and rely on the deployment checklist.
+2. Gate both on a `cfg!(debug_assertions)` build-profile check.
+3. Gate both on an explicit runtime opt-in, and refuse to boot without it.
+4. Delete `DevTokenVerifier` and the fallback key entirely.
+
+**Chosen approach: option 3.**
+
+**Reason.** Option 1 is the status quo, and the status quo shipped an open
+production server. Option 2 ties a security property to the build profile, which
+is the wrong axis: a debug build is a legitimate thing to point at a real
+Supabase project, and a release build is a legitimate thing to run offline. It
+also fails in the other direction with no override — a release build of a local
+dev server would refuse to work and offer no way to say "I meant it". Option 4
+removes the offline development path that ADR-0009 and ADR-0024 both kept
+deliberately.
+
+Option 3 makes the insecure state require a positive act that names itself.
+`ASSISTANT_ALLOW_DEV_AUTH=true` cannot be set by accident, does not appear in
+`render.yaml`, and reads in a deployment dashboard as exactly what it is. The
+failure mode is inverted: forgetting a variable now stops the process at boot
+with a named error instead of quietly serving an open API.
+
+**How it works.** `Config::validate_security` is a pure function over
+`(supabase_project_ref, credential_encryption_key, allow_dev_auth)` returning
+`ConfigError`. `from_env` calls it, so a bad combination aborts startup before
+the listener binds. It is pure precisely so it is unit-testable without mutating
+process-wide environment variables, which the existing tests avoid because they
+run concurrently in one process. The rules:
+
+- `SUPABASE_PROJECT_REF` unset and the opt-in not set → refuse.
+- `CREDENTIAL_ENCRYPTION_KEY` present but neither 64 hex characters nor exactly
+  32 bytes → refuse, whatever the opt-in says.
+- `CREDENTIAL_ENCRYPTION_KEY` unset and the opt-in not set → refuse.
+
+`parse_encryption_key` becomes the single definition of a valid key, used by
+both validation and resolution, so the two cannot disagree about what parses.
+
+**What does not change.** `PermissionPolicy::evaluate` still takes a `ToolSpec`
+and a `Principal` (ADR-0005). `DevTokenVerifier` is unchanged and still maps
+every caller to one user — this ADR does not make it safer, it makes it
+unreachable unless asked for. `Config`'s hand-written `Debug` continues to
+redact every secret; `allow_dev_auth` is a boolean and is printed, because it is
+the thing an operator needs to be able to read back.
+
+**Consequences.** The deployed Render service must set `SUPABASE_PROJECT_REF`
+and `CREDENTIAL_ENCRYPTION_KEY` before it will start again. That is the intended
+outcome; the alternative is a service that starts and is open. Local development
+and the offline path need `ASSISTANT_ALLOW_DEV_AUTH=true`, which `.env.example`
+now documents. The integration tests construct `Config` directly and set
+`allow_dev_auth: true` explicitly, so the harness states the same thing the
+operator has to.
+
+Rotating the exposed `local-dev-token` and re-encrypting any Google refresh
+token stored under the fallback key are operational steps this ADR does not
+perform.

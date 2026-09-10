@@ -21,6 +21,9 @@ fn config() -> Config {
         database_url: None,
         dev_auth_token: TEST_TOKEN.to_string(),
         supabase_project_ref: None,
+        // Stated explicitly, because the server now refuses to start on the
+        // development verifier unless it is asked for (ADR-0039).
+        allow_dev_auth: true,
         allowed_origins: vec!["http://localhost:1420".to_string()],
         log_filter: "off".to_string(),
         max_tool_rounds: 4,
