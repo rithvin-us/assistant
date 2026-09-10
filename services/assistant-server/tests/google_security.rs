@@ -247,3 +247,148 @@ fn calendar_delete_is_statically_orange_risk() {
     let list_tool = CalendarListTool::new(provider);
     assert_eq!(list_tool.spec().risk, assistant_tools::RiskLevel::Green);
 }
+
+#[test]
+fn scope_expansion_normalizes_and_implies_dependent_scopes() {
+    let raw = vec![
+        "https://www.googleapis.com/auth/calendar.events".to_string(),
+        "https://www.googleapis.com/auth/gmail.modify".to_string(),
+        "https://www.googleapis.com/auth/drive".to_string(),
+        "https://www.googleapis.com/auth/classroom.courses.readonly".to_string(),
+        "https://www.googleapis.com/auth/classroom.coursework.students.readonly".to_string(),
+    ];
+
+    let expanded = assistant_server::google::client::expand_google_scopes(&raw);
+
+    // Canonical short names
+    assert!(expanded.contains(&"calendar.events".to_string()));
+    assert!(expanded.contains(&"gmail.modify".to_string()));
+    assert!(expanded.contains(&"drive".to_string()));
+    assert!(expanded.contains(&"classroom.courses.readonly".to_string()));
+    assert!(expanded.contains(&"classroom.coursework.students.readonly".to_string()));
+
+    // Implied scopes required by tools
+    assert!(
+        expanded.contains(&"calendar.readonly".to_string()),
+        "calendar.events implies calendar.readonly"
+    );
+    assert!(
+        expanded.contains(&"gmail.readonly".to_string()),
+        "gmail.modify implies gmail.readonly"
+    );
+    assert!(
+        expanded.contains(&"gmail.send".to_string()),
+        "gmail.modify implies gmail.send"
+    );
+    assert!(
+        expanded.contains(&"drive.readonly".to_string()),
+        "drive implies drive.readonly"
+    );
+    assert!(
+        expanded.contains(&"classroom.coursework.me.readonly".to_string()),
+        "classroom students coursework implies me coursework"
+    );
+}
+
+#[test]
+fn permission_policy_denies_unscoped_principal_for_google_tools() {
+    use assistant_auth::Principal;
+    use assistant_core::{PermissionPolicy, RiskBasedPolicy};
+    use assistant_tools::PermissionDecision;
+
+    let policy = RiskBasedPolicy::new();
+    let unscoped_principal = Principal {
+        user_id: Uuid::new_v4(),
+        scopes: vec![],
+    };
+
+    let provider = Arc::new(MockSecurityProvider {
+        owner_user_id: unscoped_principal.user_id,
+        connected_account_id: Uuid::new_v4(),
+        is_disconnected: false,
+    });
+
+    let gmail_tool = GmailSearchTool::new(provider.clone());
+    let cal_list_tool = CalendarListTool::new(provider.clone());
+    let cal_delete_tool = CalendarDeleteTool::new(provider);
+
+    match policy.evaluate(gmail_tool.spec(), &unscoped_principal) {
+        PermissionDecision::Deny { reason } => {
+            assert!(reason.contains("gmail.readonly"), "Deny reason: {reason}");
+        }
+        other => panic!("Expected Deny for unscoped principal, got {other:?}"),
+    }
+
+    match policy.evaluate(cal_list_tool.spec(), &unscoped_principal) {
+        PermissionDecision::Deny { reason } => {
+            assert!(
+                reason.contains("calendar.readonly"),
+                "Deny reason: {reason}"
+            );
+        }
+        other => panic!("Expected Deny for unscoped principal, got {other:?}"),
+    }
+
+    match policy.evaluate(cal_delete_tool.spec(), &unscoped_principal) {
+        PermissionDecision::Deny { reason } => {
+            assert!(reason.contains("calendar.events"), "Deny reason: {reason}");
+        }
+        other => panic!("Expected Deny for unscoped principal, got {other:?}"),
+    }
+}
+
+#[test]
+fn permission_policy_allows_populated_principal_and_requires_approval_for_orange_risk() {
+    use assistant_auth::Principal;
+    use assistant_core::{PermissionPolicy, RiskBasedPolicy};
+    use assistant_tools::PermissionDecision;
+
+    let policy = RiskBasedPolicy::new();
+    let raw_scopes = vec![
+        "https://www.googleapis.com/auth/calendar.events".to_string(),
+        "https://www.googleapis.com/auth/gmail.readonly".to_string(),
+    ];
+    let expanded = assistant_server::google::client::expand_google_scopes(&raw_scopes);
+
+    let scoped_principal = Principal {
+        user_id: Uuid::new_v4(),
+        scopes: expanded,
+    };
+
+    let provider = Arc::new(MockSecurityProvider {
+        owner_user_id: scoped_principal.user_id,
+        connected_account_id: Uuid::new_v4(),
+        is_disconnected: false,
+    });
+
+    let gmail_tool = GmailSearchTool::new(provider.clone());
+    let cal_list_tool = CalendarListTool::new(provider.clone());
+    let cal_delete_tool = CalendarDeleteTool::new(provider);
+
+    // Green tools with scopes satisfied are Allowed
+    assert!(
+        matches!(
+            policy.evaluate(gmail_tool.spec(), &scoped_principal),
+            PermissionDecision::Allow
+        ),
+        "gmail.search should be allowed"
+    );
+    assert!(
+        matches!(
+            policy.evaluate(cal_list_tool.spec(), &scoped_principal),
+            PermissionDecision::Allow
+        ),
+        "calendar.list should be allowed because calendar.events implies calendar.readonly"
+    );
+
+    // Orange tools with scopes satisfied require human approval (not scope denial!)
+    match policy.evaluate(cal_delete_tool.spec(), &scoped_principal) {
+        PermissionDecision::RequireApproval { reason } => {
+            assert!(
+                reason.contains("calendar.delete"),
+                "Approval reason: {reason}"
+            );
+        }
+        other => panic!("Expected RequireApproval for orange tool, got {other:?}"),
+    }
+}

@@ -17,6 +17,9 @@ use assistant_core::{
 };
 use assistant_models::{ModelId, ModelProvider};
 use assistant_protocol::{ApiError, PendingApproval, RiskLevel, ServerFrame};
+use sqlx::{PgPool, Row};
+
+use crate::google::client::expand_google_scopes;
 
 /// Everything the orchestrator needs that is not plain configuration.
 ///
@@ -55,6 +58,8 @@ pub struct Dependencies {
     /// discarding the input, and the bounded memory retrieval on the context
     /// path is skipped.
     pub memory: Option<Arc<dyn assistant_memory::MemoryStore>>,
+    /// Database pool used to query connected accounts for context injection.
+    pub pool: Option<sqlx::PgPool>,
 }
 
 impl Default for Dependencies {
@@ -66,6 +71,7 @@ impl Default for Dependencies {
             approval_policy: ApprovalPolicy::default(),
             conversations: None,
             memory: None,
+            pool: None,
         }
     }
 }
@@ -118,6 +124,7 @@ pub fn build(
         approval_policy,
         conversations,
         memory,
+        pool,
     } = deps;
     let registry = tools;
 
@@ -150,6 +157,10 @@ pub fn build(
             assistant_memory::MAX_CONTEXT_MEMORIES,
         )),
         None => base_context,
+    };
+    let context: Arc<dyn assistant_core::ContextProvider> = match pool {
+        Some(p) => Arc::new(GoogleAccountsContextProvider::new(context, p)),
+        None => context,
     };
 
     // Built first so the coordinator can borrow its executor.
@@ -262,6 +273,64 @@ fn risk_to_wire(risk: assistant_tools::RiskLevel) -> RiskLevel {
     }
 }
 
+/// Context provider that injects active connected Google accounts into `facts`.
+///
+/// Ensures the model knows the exact `account_id` and authorized scopes for
+/// each of the user's connected accounts, preventing hallucinated account IDs
+/// or failed tool calls.
+#[derive(Clone)]
+pub struct GoogleAccountsContextProvider {
+    inner: Arc<dyn assistant_core::ContextProvider>,
+    pool: PgPool,
+}
+
+impl GoogleAccountsContextProvider {
+    pub fn new(inner: Arc<dyn assistant_core::ContextProvider>, pool: PgPool) -> Self {
+        Self { inner, pool }
+    }
+}
+
+#[async_trait::async_trait]
+impl assistant_core::ContextProvider for GoogleAccountsContextProvider {
+    async fn assemble(
+        &self,
+        request: &assistant_core::TurnRequest,
+    ) -> Result<assistant_core::TurnContext, assistant_core::context::ContextError> {
+        let mut context = self.inner.assemble(request).await?;
+
+        let rows = sqlx::query(
+            r#"
+            SELECT id, email, display_name, scopes
+            FROM connected_accounts
+            WHERE user_id = $1 AND provider = 'google' AND status = 'active'
+            ORDER BY created_at ASC
+            "#,
+        )
+        .bind(request.principal.user_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| Box::new(e) as assistant_core::context::ContextError)?;
+
+        for r in rows {
+            let id: uuid::Uuid = r.get("id");
+            let email: String = r.get("email");
+            let display_name: Option<String> = r.get("display_name");
+            let scopes: Vec<String> = r.get("scopes");
+            let expanded = expand_google_scopes(&scopes);
+            let name_part = display_name
+                .filter(|s| !s.trim().is_empty())
+                .map(|n| format!(" ({n})"))
+                .unwrap_or_default();
+            context.facts.push(format!(
+                "[connected_account:google] {email}{name_part}, account_id: {id}, available_scopes: [{}]",
+                expanded.join(", ")
+            ));
+        }
+
+        Ok(context)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -303,5 +372,11 @@ mod tests {
             message_id: Uuid::new_v4(),
         });
         assert!(dropped.is_none());
+    }
+
+    #[test]
+    fn default_dependencies_has_no_pool() {
+        let deps = Dependencies::default();
+        assert!(deps.pool.is_none());
     }
 }

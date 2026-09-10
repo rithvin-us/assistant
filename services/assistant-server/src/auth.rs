@@ -11,7 +11,41 @@ use axum::{
     response::Response,
 };
 
-use crate::{error::AppError, state::SharedState};
+use assistant_auth::Principal;
+use sqlx::{PgPool, Row};
+
+use crate::{error::AppError, google::client::expand_google_scopes, state::SharedState};
+
+/// Populates `principal.scopes` with expanded scopes from all active connected accounts.
+pub async fn populate_principal_scopes(
+    pool: &PgPool,
+    principal: &mut Principal,
+) -> Result<(), sqlx::Error> {
+    let rows = sqlx::query(
+        r#"
+        SELECT scopes
+        FROM connected_accounts
+        WHERE user_id = $1 AND status = 'active'
+        "#,
+    )
+    .bind(principal.user_id)
+    .fetch_all(pool)
+    .await?;
+
+    let mut all_scopes: std::collections::HashSet<String> =
+        principal.scopes.iter().cloned().collect();
+    for row in rows {
+        let scopes: Vec<String> = row.get("scopes");
+        for s in expand_google_scopes(&scopes) {
+            all_scopes.insert(s);
+        }
+    }
+
+    let mut sorted: Vec<String> = all_scopes.into_iter().collect();
+    sorted.sort();
+    principal.scopes = sorted;
+    Ok(())
+}
 
 pub async fn require_bearer(
     State(state): State<SharedState>,
@@ -20,11 +54,17 @@ pub async fn require_bearer(
 ) -> Result<Response, AppError> {
     let token = bearer_token(&request).ok_or(AppError::Unauthorized)?;
 
-    let principal = state
+    let mut principal = state
         .verifier
         .verify(&token)
         .await
         .map_err(|_| AppError::Unauthorized)?;
+
+    if let Some(pool) = &state.db
+        && let Err(e) = populate_principal_scopes(pool, &mut principal).await
+    {
+        tracing::warn!(error = %e, "Failed to populate principal scopes from connected accounts");
+    }
 
     request.extensions_mut().insert(principal);
     Ok(next.run(request).await)

@@ -160,7 +160,7 @@ async fn main() -> anyhow::Result<()> {
 
     let router = app(
         &config,
-        pool,
+        pool.clone(),
         events.clone(),
         assistant_server::orchestration::Dependencies {
             model,
@@ -168,6 +168,7 @@ async fn main() -> anyhow::Result<()> {
             store,
             conversations,
             memory,
+            pool: pool.clone(),
             ..Default::default()
         },
     );

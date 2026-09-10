@@ -288,7 +288,13 @@ fn normalize_announcement(
 #[async_trait]
 impl ClassroomProvider for GoogleClient {
     async fn courses(&self, account_id: Uuid, user_id: Uuid) -> Result<Vec<Course>, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(
+                user_id,
+                account_id,
+                Some("classroom.courses.readonly"),
+            )
+            .await?;
         let synced_at = OffsetDateTime::now_utc();
         let mut out = Vec::new();
         let mut page_token: Option<String> = None;
@@ -338,7 +344,13 @@ impl ClassroomProvider for GoogleClient {
         user_id: Uuid,
         course_external_id: &str,
     ) -> Result<Vec<CourseworkItem>, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(
+                user_id,
+                account_id,
+                Some("classroom.coursework.me.readonly"),
+            )
+            .await?;
         let synced_at = OffsetDateTime::now_utc();
         let mut out = Vec::new();
         let mut page_token: Option<String> = None;
@@ -393,7 +405,13 @@ impl ClassroomProvider for GoogleClient {
         course_external_id: &str,
         limit: u32,
     ) -> Result<Vec<Announcement>, ToolError> {
-        let token = self.get_access_token(user_id, account_id).await?;
+        let token = self
+            .get_access_token_with_required_scope(
+                user_id,
+                account_id,
+                Some("classroom.announcements.readonly"),
+            )
+            .await?;
         let synced_at = OffsetDateTime::now_utc();
 
         // One page only. Announcements are shown as "recent"; there is no

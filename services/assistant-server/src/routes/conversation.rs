@@ -42,7 +42,7 @@ pub async fn stream(
 async fn handle(
     mut socket: WebSocket,
     state: SharedState,
-    principal: Principal,
+    mut principal: Principal,
     conversation_id: Uuid,
 ) {
     state
@@ -117,6 +117,9 @@ async fn handle(
                 }
             }
             ClientFrame::UserText { text } => {
+                if let Some(pool) = &state.db {
+                    let _ = crate::auth::populate_principal_scopes(pool, &mut principal).await;
+                }
                 let request = TurnRequest::new(conversation_id, principal.clone(), text);
 
                 if run_turn(&mut socket, &state, request, socket_cancel.child_token())
@@ -128,6 +131,9 @@ async fn handle(
             }
 
             ClientFrame::ListPendingApprovals => {
+                if let Some(pool) = &state.db {
+                    let _ = crate::auth::populate_principal_scopes(pool, &mut principal).await;
+                }
                 let frame = pending_approvals(&state, &principal).await;
                 if send(&mut socket, frame).await.is_err() {
                     break;
@@ -139,6 +145,9 @@ async fn handle(
             // server loads the persisted action, scoped to the authenticated
             // principal, and that record decides what happens. See ADR-0015.
             ClientFrame::ApproveAction { approval_id } => {
+                if let Some(pool) = &state.db {
+                    let _ = crate::auth::populate_principal_scopes(pool, &mut principal).await;
+                }
                 let frame = resolve_approval(
                     &state,
                     &principal,
@@ -153,6 +162,9 @@ async fn handle(
             }
 
             ClientFrame::RejectAction { approval_id } => {
+                if let Some(pool) = &state.db {
+                    let _ = crate::auth::populate_principal_scopes(pool, &mut principal).await;
+                }
                 let frame = resolve_approval(
                     &state,
                     &principal,
@@ -350,6 +362,9 @@ async fn handle(
                 )
                 .await;
 
+                if let Some(pool) = &state.db {
+                    let _ = crate::auth::populate_principal_scopes(pool, &mut principal).await;
+                }
                 let request = TurnRequest::new(conversation_id, principal.clone(), transcript_text);
 
                 let answer = match run_turn(&mut socket, &state, request, turn_cancel.clone()).await
