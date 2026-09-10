@@ -224,6 +224,10 @@ export function friendlyError(code: string, fallback: string): string {
       return "The assistant has no model configured yet.";
     case "provider_rate_limited":
       return "The assistant is busy. Try again in a moment.";
+    case "transcription_rate_limited":
+      return "Too many requests right now. Try again in a moment.";
+    case "transcription_error":
+      return "Couldn't make out the audio. Try again.";
     case "provider_timeout":
       return "That took too long. Try again.";
     case "provider_unavailable":

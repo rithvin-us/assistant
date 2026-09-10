@@ -1804,3 +1804,99 @@ operator has to.
 Rotating the exposed `local-dev-token` and re-encrypting any Google refresh
 token stored under the fallback key are operational steps this ADR does not
 perform.
+
+---
+
+## ADR-0040 — Voice transcription runs on the speech provider, not on the chat model
+
+**Decision.** The voice turn transcribes through `POST /v1/voice/transcribe`
+(Cartesia `ink-whisper`, the `SpeechToTextProvider` trait) instead of
+`POST /v1/audio/transcribe` (Gemini `generateContent`). `/v1/audio/transcribe`
+stays as it is; nothing in the app calls it any more. Upstream provider error
+text is never copied into a client-facing message.
+
+**Context.** A voice turn on the phone rendered this under the orb, in red:
+
+```
+You exceeded your current quota, please check your plan and billing details.
+For more information on this error, head to: https://ai.google.dev/...
+* Quota exceeded for metric:
+generativelanguage.googleapis.com/generate_content_free_tier_requests,
+limit: 20, model: gemini-3.6-flash
+```
+
+Two separate faults produced that screen.
+
+The first is routing. `ASSISTANT_MODEL` and `OPENAI_TRANSCRIPTION_MODEL` are
+both `gemini-3.6-flash`, and `/v1/audio/transcribe` sends the audio to Gemini's
+`generateContent` with a "transcribe this verbatim" prompt. So one voice turn
+spends at least two calls against a single 20-per-minute free-tier quota — one
+to hear the user, one to answer them. Speech-to-text was competing with
+inference for the same budget. Cartesia was configured and idle the whole time:
+`/v1/voice/diagnostic` reported `cartesia_configured: true`,
+`stt_model: ink-whisper`, `status: ready`, and `/v1/voice/transcribe` returned
+an exact transcript of the same audio in the same minute that Gemini answered
+429.
+
+The second is disclosure. `transcribe.rs` copied the upstream `error.message`
+into `ApiError.message`; `transcribe.ts` copied that into
+`VoiceRequestError.message`; `describe()` in `useVoiceTurn.ts` fell through its
+`default` arm and rendered it. Two comments in the tree assert this cannot
+happen — `VoiceTurnFailure.message` is documented "Never contains provider
+detail or secrets", and `friendlyError` is introduced with "The server's message
+is already safe — it never contains provider internals". Both were false on this
+path.
+
+**Options.**
+1. Enable billing on the Gemini key and change no code.
+2. Move transcription to OpenAI Whisper (`OPENAI_API_KEY` is already in `.env`).
+3. Move transcription to Cartesia, which the server already speaks and pays for.
+4. Keep Gemini transcription, add backoff and a friendlier message.
+
+**Chosen approach: option 3**, with the disclosure fix applied independently of
+which provider is chosen.
+
+**Reason.** Option 1 buys quota without fixing the design fault: transcription
+and inference would still share one budget, so a burst of speech would still
+starve the answer. It is also a billing decision, not an architectural one, and
+is orthogonal to this ADR — worth doing, but not instead of this. Option 2 is
+sound in principle and `assistant-tools`-shaped, but the key on this account
+answers `insufficient_quota / credit_balance_exhausted`, so it swaps a quota
+wall for an identical one. Option 4 leaves the double-spend in place and treats
+a structural problem as a copy problem.
+
+Option 3 uses the provider whose actual job this is. `ink-whisper` is a
+transcription model; `gemini-3.6-flash` is a chat model being prompted into
+doing transcription, which is the deterministic-work-through-a-model shape this
+repository's rules already reject. Cartesia is a separate vendor with a separate
+quota, so speech and inference stop contending. The client function
+(`transcribeVoiceAudio`) and the route already existed and were already tested
+against production — the change is which one the turn calls.
+
+**How it works.** `useVoiceTurn` imports `transcribeVoiceAudio` from
+`../api/voice` rather than `transcribeAudio` from `../api/transcribe`, and reads
+`.text` off the response. On the server, a non-2xx from Gemini in
+`transcribe.rs` now maps 429 to `transcription_rate_limited` and everything else
+to `transcription_error`, both with messages written here rather than forwarded;
+the upstream text stays in the existing `tracing::warn!`, where it belongs.
+`describe()` gains explicit arms for those two codes and its `default` arm stops
+forwarding `err.message`, so the type's stated invariant is enforced by the code
+rather than asserted by a comment. `friendlyError` gains the matching arms for
+the chat path.
+
+**What does not change.** `assistant-core` still depends on the
+`SpeechToTextProvider` trait and not on Cartesia. `/v1/audio/transcribe` and its
+Gemini path are untouched and still work; this ADR removes its only caller, it
+does not delete the route. `RiskLevel`, `PermissionPolicy::evaluate` and the
+approval seam are not involved. No model chooses a provider — the route does.
+
+**Consequences.** A voice turn now costs one Cartesia STT call and one Gemini
+`generateContent` call, halving Gemini use per turn and removing STT from that
+quota entirely. Transcription now fails when `CARTESIA_API_KEY` is absent, where
+previously it fell back to a chat model — `/v1/voice/diagnostic` already reports
+that state, and `voice_unconfigured` already has a written message. Accuracy
+becomes Cartesia's rather than Gemini's; both returned the identical exact
+transcript on the audio tested, which is one sample and not a benchmark. The
+answer leg still runs on Gemini and still hits the free-tier ceiling — this ADR
+does not claim to fix that, and enabling billing (option 1) remains the separate
+operational step for it.

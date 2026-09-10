@@ -23,8 +23,12 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { AudioPlaybackController, VoiceRequestError, speakVoiceText } from "../api/voice";
-import { transcribeAudio } from "../api/transcribe";
+import {
+  AudioPlaybackController,
+  VoiceRequestError,
+  speakVoiceText,
+  transcribeVoiceAudio,
+} from "../api/voice";
 import { TurnFailedError, executeTurn } from "../api/conversation";
 import type { VoiceState } from "../api/types";
 
@@ -70,8 +74,16 @@ function describe(err: unknown): VoiceTurnFailure {
         return { code: err.code, message: "Voice isn't configured on the server." };
       case "voice_provider_auth_failed":
         return { code: err.code, message: "The voice provider rejected the server's key." };
+      case "transcription_rate_limited":
+        return { code: err.code, message: "Too many requests right now. Try again in a moment." };
+      case "transcription_error":
+        return { code: err.code, message: "Couldn't make out the audio. Try again." };
       default:
-        return { code: err.code, message: err.message };
+        // Deliberately not `err.message`. That arm forwarded whatever the
+        // server sent, and when the server forwarded its provider, a Gemini
+        // quota page with billing URLs rendered under the orb. The code is
+        // still carried for logging and for the cases above. See ADR-0040.
+        return { code: err.code, message: "Voice isn't working right now. Try again." };
     }
   }
   if (err instanceof TurnFailedError) return { code: err.code, message: err.message };
@@ -170,7 +182,10 @@ export function useVoiceTurn(): VoiceTurn {
     try {
       if (!live()) return;
       setState("transcribing");
-      const spoken = await transcribeAudio(audio, controller.signal);
+      // Cartesia `ink-whisper`, not the chat model. Transcribing through
+      // Gemini `generateContent` spent the same 20-per-minute quota the answer
+      // needed, so speech competed with inference. See ADR-0040.
+      const { text: spoken } = await transcribeVoiceAudio(audio, controller.signal);
 
       if (!live()) return;
 

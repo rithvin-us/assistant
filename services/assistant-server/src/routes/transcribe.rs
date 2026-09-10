@@ -17,17 +17,39 @@ pub struct TranscribeResponse {
     pub text: String,
 }
 
+/// Only the success shape is modelled. The error shape used to be parsed so its
+/// `message` could be forwarded to the client, which is exactly what ADR-0040
+/// stops; an unparsed error body cannot leak.
 #[derive(Debug, Deserialize)]
 struct OpenAIWhisperResponse {
     #[serde(default)]
     text: String,
-    #[serde(default)]
-    error: Option<OpenAIErrorDetail>,
 }
 
-#[derive(Debug, Deserialize)]
-struct OpenAIErrorDetail {
-    message: Option<String>,
+/// Maps an upstream transcription failure onto something a client may be told.
+///
+/// A provider's own error message names quotas, metrics, model ids and billing
+/// URLs. That text was copied verbatim into `ApiError.message`, which the mobile
+/// client renders, so a Gemini quota page appeared in red under the voice orb on
+/// a physical device. Only the status crosses this boundary; the upstream text
+/// stays in the `tracing` line above each call site. See ADR-0040.
+fn upstream_error(status: StatusCode) -> (StatusCode, Json<ApiError>) {
+    let (code, message) = if status == StatusCode::TOO_MANY_REQUESTS {
+        (
+            "transcription_rate_limited",
+            "Transcription is rate limited right now. Try again in a moment.",
+        )
+    } else {
+        ("transcription_error", "Transcription failed. Try again.")
+    };
+
+    (
+        StatusCode::BAD_GATEWAY,
+        Json(ApiError {
+            code: code.into(),
+            message: message.into(),
+        }),
+    )
 }
 
 pub async fn transcribe(
@@ -123,7 +145,10 @@ pub async fn transcribe(
         // model the deployment had not asked for. Backing off on the model that
         // is actually configured keeps the reported cause the real one.
         const ATTEMPTS: usize = 3;
-        let mut last_error_msg = String::new();
+        // The last upstream status, not the last upstream message. See
+        // `upstream_error`: the message is a diagnostic for the log, and the
+        // status is the only part of it a client is told about.
+        let mut last_status: Option<StatusCode> = None;
 
         for attempt in 0..ATTEMPTS {
             let model_name = &primary_model;
@@ -160,7 +185,6 @@ pub async fn transcribe(
                 Ok(res) => res,
                 Err(e) => {
                     tracing::warn!(attempt, error = %e, "Gemini transcription network transport attempt failed");
-                    last_error_msg = format!("Network error: {e}");
                     continue;
                 }
             };
@@ -170,7 +194,6 @@ pub async fn transcribe(
                 Ok(j) => j,
                 Err(e) => {
                     tracing::warn!(attempt, error = %e, "Failed to parse Gemini response JSON");
-                    last_error_msg = format!("JSON parse error: {e}");
                     continue;
                 }
             };
@@ -180,7 +203,7 @@ pub async fn transcribe(
                     .as_str()
                     .unwrap_or("Gemini transcription failed");
                 tracing::warn!(status = %status, attempt, model = %model_name, error_message = %msg, "Gemini STT spike / error");
-                last_error_msg = msg.to_string();
+                last_status = Some(status);
 
                 // If 529 (Overloaded), 503 (Unavailable), or 429 (Rate Limit), retry with next model candidate
                 if status == StatusCode::SERVICE_UNAVAILABLE
@@ -191,13 +214,7 @@ pub async fn transcribe(
                 }
 
                 // For fatal errors (e.g. invalid key), fail early
-                return Err((
-                    StatusCode::BAD_GATEWAY,
-                    Json(ApiError {
-                        code: "transcription_error".into(),
-                        message: msg.to_string(),
-                    }),
-                ));
+                return Err(upstream_error(status));
             }
 
             let transcribed_text = resp_json["candidates"][0]["content"]["parts"][0]["text"]
@@ -211,16 +228,11 @@ pub async fn transcribe(
             }));
         }
 
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            Json(ApiError {
-                code: "transcription_error".into(),
-                message: if last_error_msg.is_empty() {
-                    "All Gemini transcription model attempts failed.".into()
-                } else {
-                    last_error_msg
-                },
-            }),
+        // Every attempt failed. A transport or parse failure leaves no status,
+        // and is reported as a generic transcription failure rather than as a
+        // rate limit it was not.
+        return Err(upstream_error(
+            last_status.unwrap_or(StatusCode::BAD_GATEWAY),
         ));
     }
 
@@ -297,22 +309,10 @@ pub async fn transcribe(
     if !status.is_success() {
         // The status is the diagnostic. The body is a provider response we do
         // not control and cannot vet, so it stays out of the log rather than
-        // risking quota, account or prompt detail landing in it.
+        // risking quota, account or prompt detail landing in it -- and, for the
+        // same reason, out of the response. It used to be forwarded verbatim.
         tracing::error!(status = %status, "OpenAI transcription error");
-        let parsed: Result<OpenAIWhisperResponse, _> = serde_json::from_str(&text);
-        let detail = parsed
-            .ok()
-            .and_then(|p| p.error)
-            .and_then(|e| e.message)
-            .unwrap_or_else(|| "Transcription failed".into());
-
-        return Err((
-            StatusCode::BAD_GATEWAY,
-            Json(ApiError {
-                code: "transcription_error".into(),
-                message: detail,
-            }),
-        ));
+        return Err(upstream_error(status));
     }
 
     let parsed: OpenAIWhisperResponse = serde_json::from_str(&text).map_err(|e| {
