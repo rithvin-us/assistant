@@ -443,6 +443,73 @@ and should be rotated, and the `GOOGLE_REDIRECT_URI` correction must be mirrored
 in the Google Cloud console's authorised redirect URIs before account
 connection will succeed.
 
+## 6d. Voice / talkback verification (production)
+
+Tested against the deployed server over the real WebSocket, with synthesised
+speech as input -- not localhost, and not a mock.
+
+**End-to-end results, spoken in and spoken out:**
+
+| spoken input | reply | total |
+|---|---|---|
+| "What is the capital of France?" | "The capital of France is Paris." | 4.72s |
+| "Remember that I like tea." | "Saved as preference: 'I like tea'." | 1.56s |
+| "Good morning. Please say hello back to me." | "Good morning! Hello! How can I assist you today?" | 4.77s |
+
+Stage breakdown on the model path: connect 0.4s, STT 1.8s, model 1.7s, TTS 1.1s.
+The 1.56s case is the deterministic handler, which answers without contacting a
+model at all -- that path is genuinely instant, and is the shape the rest should
+aspire to.
+
+A TTS/STT round trip is exact: synthesising "Testing the assistant voice
+pipeline." and feeding the audio back returned that sentence verbatim in 0.95s.
+
+**The 22-second turn, diagnosed.** Before this milestone every voice turn either
+took ~22-28s or failed outright. Three separate causes, all now understood:
+
+1. `ASSISTANT_MODEL` was set to the shared alias `gemini-flash-latest`, which
+   was congested. Google's own reply, captured in the logs, was
+   `503 UNAVAILABLE — "This model is currently experiencing high demand."`
+   Pinning the model to `gemini-3.6-flash` -- which is what `config.rs` already
+   defaults to -- took the model stage from 22s to 1.7s. The env var had been
+   overriding the repo's own correct default.
+2. `ASSISTANT_MODEL_TIMEOUT_MS` was 15000, below the latency the congested alias
+   was actually producing, so every turn was guillotined at 15s and reported
+   `provider_timeout`. Raised to 45000. With the pinned model this is now large
+   headroom rather than a live constraint.
+3. Empty tool arguments aborted the turn -- see the fix below.
+
+Transport was never at fault: the debug logs show the connection to
+`generativelanguage.googleapis.com` (172.217.117.4:443, IPv4) completing in
+14 ms.
+
+**Honest limits on "instant".** Even at 4.7s this is not ChatGPT-style voice,
+and the remaining gap is architectural rather than a misconfiguration. TTS
+begins only after `turn_end`, so the reply is synthesised as one block after the
+model has finished writing all of it. Systems that feel instantaneous start
+speaking the first sentence while the rest is still generating. Closing that gap
+means chunking synthesis on sentence boundaries and streaming
+`VoiceTtsChunk`s as deltas arrive -- a real change to the voice path, not a
+setting, and out of scope for a hardening milestone.
+
+**What the voice path does correctly**, confirmed live: STT is accurate and
+fast; a provider failure is reported honestly (`provider_unavailable`,
+`provider_timeout`, `provider_invalid_request`) and never as a fabricated reply;
+an invalid model id fails in 2.3s rather than hanging; and the deterministic
+handler bypasses the model entirely.
+
+**Still open on this path.** Asking "What are my tasks today?" cannot succeed:
+only Google tools are registered (`gmail.*`, `calendar.*`, `classroom.*`,
+`drive.*`, `academic.*`) and there is no tasks/reminders tool, so the model
+reaches for Classroom and is correctly refused for a missing scope. Two
+consequences, neither fixed here: registering a tasks tool is a feature, not
+hardening; and a `PermissionDecision::Deny` returns `Err` from the pre-pass in
+`Orchestrator::authorize`, which ends the whole turn rather than letting the
+assistant say what it could not reach. Making a denial recoverable means
+restructuring that pre-pass, which is the permission seam CLAUDE.md warns
+against changing casually -- it needs its own change with its own tests, not a
+tail-end edit.
+
 ## 7. NOT VERIFIED
 
 - ~~**Remote database schema.**~~ **RESOLVED** — see section 6c. Migrations
