@@ -64,7 +64,7 @@ fn db_pool(state: &SharedState) -> Result<&PgPool, AppError> {
     state
         .db
         .as_ref()
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("database unavailable")))
+        .ok_or_else(|| AppError::DependencyUnavailable("the database"))
 }
 
 /// Neutralises `ilike` metacharacters in a user-supplied search term.

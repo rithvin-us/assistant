@@ -38,7 +38,10 @@ async fn main() -> anyhow::Result<()> {
             // yet refusing to boot would also block frontend work. Log loudly,
             // report degraded via /v1/health, continue.
             Err(error) => {
-                tracing::info!(error = %error, "DATABASE_URL unreachable; running in memory mode");
+                tracing::error!(
+                    error = %error,
+                    "DATABASE_URL is configured but unreachable; starting without persistence.                      Every route that stores anything will fail until this is fixed."
+                );
                 None
             }
         },

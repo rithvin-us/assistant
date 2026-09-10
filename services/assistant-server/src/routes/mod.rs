@@ -27,6 +27,7 @@ pub fn router(state: SharedState) -> Router {
     let public = Router::new()
         .route("/", get(google::oauth_callback))
         .route("/v1/health", get(health::health))
+        .route("/v1/ready", get(health::ready))
         .route("/v1/auth/google/callback", get(google::oauth_callback));
 
     let protected = Router::new()

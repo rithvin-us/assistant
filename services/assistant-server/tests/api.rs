@@ -176,6 +176,39 @@ async fn health_is_public_and_reports_degraded_without_a_database() {
     assert!(matches!(body.status, HealthStatus::Degraded));
 }
 
+/// M13 regression. Readiness must answer with a status code, and must not
+/// report ready merely because the process is alive: an earlier `is_healthy`
+/// returned `db.is_some()`, so a server with no working database still said
+/// "ok". A platform health check pointed at this must fail here.
+#[tokio::test]
+async fn readiness_refuses_with_503_when_there_is_no_working_database() {
+    let addr = spawn_with(Dependencies::default()).await;
+
+    let response = reqwest::get(format!("http://{addr}/v1/ready"))
+        .await
+        .expect("request succeeds");
+    assert_eq!(
+        response.status(),
+        503,
+        "a server with no database is not ready"
+    );
+
+    let body: assistant_protocol::HealthResponse = response.json().await.expect("valid body");
+    assert!(matches!(body.status, HealthStatus::Degraded));
+    assert_eq!(body.protocol_version, PROTOCOL_VERSION);
+}
+
+/// Readiness is public, like health: a probe cannot hold a credential.
+#[tokio::test]
+async fn readiness_is_public() {
+    let addr = spawn_with(Dependencies::default()).await;
+
+    let response = reqwest::get(format!("http://{addr}/v1/ready"))
+        .await
+        .expect("request succeeds");
+    assert_ne!(response.status(), 401, "readiness must not require auth");
+}
+
 #[tokio::test]
 async fn conversation_socket_rejects_a_missing_token() {
     let addr = spawn_with(Dependencies::default()).await;
