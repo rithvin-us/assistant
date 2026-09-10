@@ -384,11 +384,64 @@ client. It does **not** restore per-user identity: every caller is still one
 fixed user. Real authentication needs a login screen, and that is a milestone,
 not a configuration change.
 
+## 6c. Production remediation and verification (completed)
+
+The deployed service was brought to a working, non-bypassable state and each
+step verified against it rather than assumed.
+
+**Changes made to `srv-daepksf40ujc7387pg60`:**
+
+| Change | Evidence it took effect |
+|---|---|
+| `DEV_AUTH_TOKEN` rotated to a 64-character random value | `local-dev-token` -> **401** (was 200) |
+| `ASSISTANT_ALLOW_DEV_AUTH=true` set explicitly | boot log now prints `allow_dev_auth: true` |
+| `GOOGLE_REDIRECT_URI` corrected to `/v1/auth/google/callback` | boot log shows the new value; the old path returned 404 |
+| `DATABASE_URL` repointed at the Supabase **session pooler** (`aws-0-ap-southeast-1.pooler.supabase.com:5432`) | boot log: `connected to postgres` |
+| Migration `0012` applied with `sqlx migrate run` | `sqlx migrate info` reports `12/installed` |
+
+**Remote schema verified directly**, closing the largest item that the previous
+revision of this document listed as unverifiable from the repository. Queried
+through the project's own Supabase instance (`uiumoirlfkkucoqpaura`):
+
+- `public._sqlx_migrations` held 11 rows, versions 1-11, all `success = true`,
+  matching `migrations/` exactly. No drift, nothing missing, nothing applied
+  out of band.
+- All 24 expected tables exist, and `rls_enabled` is true on every one of them,
+  which is what ADR-0023 requires.
+- Before `0012`, the live constraint read
+  `CHECK (status = ANY (ARRAY['active','expired','revoked']))` — H1 confirmed at
+  runtime in production, not merely inferred from source. After `0012` it reads
+  `CHECK (status = ANY (ARRAY['active','expired','revoked','disconnected','error']))`.
+  Google account disconnection works from this point on.
+- `connected_accounts` holds 3 rows, all `active`, all with scopes.
+
+**Production vertical slice — the part that could be run:**
+
+| Step | Result |
+|---|---|
+| `/v1/health` | `{"status":"ok"}` (was `degraded`) |
+| `/v1/ready` (new) | 200 — the readiness probe genuinely reaches the database |
+| Authenticated read: tasks, memories, documents, google accounts, planning | all 200 with real rows |
+| Durable low-risk write | task created, read back, deleted (204). Test row removed. |
+| H2 fix live | `/v1/tasks?access_token=<token>` -> **401**; same token in the header -> 200 |
+| M4 fix live | before the database came up, `/v1/tasks` returned `503 dependency_unavailable` rather than a 500 |
+
+**What this does not establish.** Every row above is owned by
+`deadbeef-0000-4000-8000-000000000001` — `DevTokenVerifier::DEV_USER_ID`. The
+server is reachable only with a strong secret now, but it still has exactly one
+user, so none of this exercises per-user authorization in production. That
+requires real authentication, which requires a sign-in screen in the app.
+
+Two operational items remain outstanding and are **not** closed by the above:
+the Supabase database password was transmitted in plaintext during this session
+and should be rotated, and the `GOOGLE_REDIRECT_URI` correction must be mirrored
+in the Google Cloud console's authorised redirect URIs before account
+connection will succeed.
+
 ## 7. NOT VERIFIED
 
-- **Remote database schema.** Cannot be confirmed from the repository. The
-  applied migration list must be read from the production database directly.
-  Production readiness is incomplete until it is.
+- ~~**Remote database schema.**~~ **RESOLVED** — see section 6c. Migrations
+  1-12 are confirmed applied, all 24 tables exist, RLS is on for every one.
 - **Backups.** No backup configuration exists anywhere in the repository.
   Whether the hosting provider takes any is undocumented and unverified. No
   restore test was performed. Disaster recovery must not be claimed to exist.
@@ -396,9 +449,11 @@ not a configuration change.
   authentication, voice, tool call, Google read, task/reminder, memory,
   document, planning, account switch, offline, reconnect and app restart are all
   **NOT VERIFIED**.
-- **Production vertical slice.** Only unauthenticated probes and one
-  authenticated read were performed, against a server with no database. The
-  six-step slice in the brief was not run.
+- **Production vertical slice.** Partially run — see section 6c. Authenticated
+  read, durable low-risk write and persistence are verified end to end against
+  the production server and database. Still NOT VERIFIED: the authenticated
+  voice request, the approval-required operation, and anything requiring the
+  Android client.
 - **Whether the mobile app renders document page content as HTML** — decides the
   real severity of M11.
 - **Runtime behaviour of the PDF bomb (H7)** — argued from absent bounds in
