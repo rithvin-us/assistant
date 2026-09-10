@@ -510,6 +510,46 @@ restructuring that pre-pass, which is the permission seam CLAUDE.md warns
 against changing casually -- it needs its own change with its own tests, not a
 tail-end edit.
 
+## 6e. Android device verification (physical)
+
+Performed on a physical OnePlus PJF110 over ADB, against the production server.
+
+The APK that was on the device carried `local-dev-token`, which the rotated
+secret had invalidated, so every authenticated call returned 401. That was a
+stale build, not a defect: extracting the bundle from the APK showed
+`index-BWWKX8xv.js` with the old literal, three hours older than the corrected
+`dist`.
+
+Two environment faults had to be cleared before a correct APK could be built,
+and both were silent:
+
+1. **Two Rust installations.** `rustc` and `cargo` resolved to a standalone
+   `C:\Program Files\Rust stable MSVC 1.96` install that shadowed rustup on
+   `PATH` and carries no Android targets, while every `rustup target add` landed
+   in `~/.rustup`. The symptom was `E0463: can't find crate for core` for a
+   target that `rustup target list --installed` reported as present — two
+   different sysroots. Putting `.cargo/bin` first resolves it; removing the
+   standalone MSI is the durable fix.
+2. **Symlink privilege.** Tauri symlinks the built `.so` into `jniLibs`, which
+   Windows refuses without Developer Mode, so the build failed *after* a
+   successful `cargo build` — easy to misread as success. With Developer Mode
+   enabled the build completes unaided.
+
+**Result.** A universal debug APK was built from `19cd668`, verified before
+install (zip integrity, one `AndroidManifest`, `lib/arm64-v8a` native library
+whose SHA-256 matched the freshly compiled `.so`, and a bundle containing the
+rotated token and zero occurrences of the old one), installed with `adb`, and
+launched with the WebView cache cleared.
+
+The app connects (green status indicator), and the task list renders `call arun`
+— the single real row in the production `tasks` table. That is the whole path
+working: Android → HTTPS → production server → production Postgres → response →
+Android, authenticated with the rotated credential.
+
+Not exercised on the device: speaking into the microphone. The voice pipeline
+itself was verified separately and end to end in section 6d, but through
+synthesised audio over the WebSocket rather than the phone's mic.
+
 ## 7. NOT VERIFIED
 
 - ~~**Remote database schema.**~~ **RESOLVED** — see section 6c. Migrations
@@ -517,15 +557,18 @@ tail-end edit.
 - **Backups.** No backup configuration exists anywhere in the repository.
   Whether the hosting provider takes any is undocumented and unverified. No
   restore test was performed. Disaster recovery must not be claimed to exist.
-- **Physical Android regression.** No device test was performed. App launch,
-  authentication, voice, tool call, Google read, task/reminder, memory,
-  document, planning, account switch, offline, reconnect and app restart are all
-  **NOT VERIFIED**.
-- **Production vertical slice.** Partially run — see section 6c. Authenticated
-  read, durable low-risk write and persistence are verified end to end against
-  the production server and database. Still NOT VERIFIED: the authenticated
-  voice request, the approval-required operation, and anything requiring the
-  Android client.
+- **Physical Android regression.** Partially performed — see section 6e.
+  Verified on the device: build, install, app launch, authentication against
+  production, and a real read of production data. Still NOT VERIFIED on device:
+  voice capture through the microphone, Google reads, document handling,
+  planning, offline behaviour, reconnect and app restart. Account switch cannot
+  be tested at all, because the app has no sign-in (section 8).
+- **Production vertical slice.** **Largely RESOLVED** — see sections 6c, 6d and
+  6e. Verified end to end: authenticated text request, authenticated voice
+  request, read-only tool path, a durable low-risk write with a persistence
+  check, and the Android client reading production data over HTTPS. Still NOT
+  VERIFIED: an approval-required (Orange-risk) operation, which needs a tool
+  whose scope this account has granted.
 - **Whether the mobile app renders document page content as HTML** — decides the
   real severity of M11.
 - **Runtime behaviour of the PDF bomb (H7)** — argued from absent bounds in
