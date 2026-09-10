@@ -20,7 +20,7 @@ fn get_aggregator(state: &SharedState) -> Result<ServerPlanningAggregator, AppEr
     let pool = state
         .db
         .as_ref()
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("database unavailable")))?;
+        .ok_or_else(|| AppError::DependencyUnavailable("the database"))?;
     Ok(ServerPlanningAggregator::new(pool.clone()))
 }
 

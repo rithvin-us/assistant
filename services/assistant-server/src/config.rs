@@ -67,6 +67,11 @@ pub struct Config {
     pub google_redirect_uri: Option<String>,
     /// 32-byte AES-GCM encryption key for credentials at rest.
     pub credential_encryption_key: Option<String>,
+    /// Permits the development-only security defaults: `DevTokenVerifier` and
+    /// the hardcoded credential encryption key. Without it, a configuration
+    /// that would reach either one refuses to start rather than quietly serving
+    /// an open API. See ADR-0039.
+    pub allow_dev_auth: bool,
     /// Directory the local document storage backend writes into (M8).
     pub document_storage_dir: PathBuf,
 
@@ -123,14 +128,28 @@ impl Config {
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty());
 
+        let allow_dev_auth = std::env::var("ASSISTANT_ALLOW_DEV_AUTH")
+            .ok()
+            .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+
+        let supabase_project_ref = std::env::var("SUPABASE_PROJECT_REF")
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
+
+        // Refuse to start rather than fall back to a development default that
+        // nobody asked for (ADR-0039). This runs before the listener binds.
+        Self::validate_security(
+            supabase_project_ref.as_deref(),
+            credential_encryption_key.as_deref(),
+            allow_dev_auth,
+        )?;
+
         Ok(Self {
             bind_addr,
             database_url: std::env::var("DATABASE_URL").ok().filter(|s| !s.is_empty()),
             dev_auth_token,
-            supabase_project_ref: std::env::var("SUPABASE_PROJECT_REF")
-                .ok()
-                .map(|value| value.trim().to_string())
-                .filter(|value| !value.is_empty()),
+            supabase_project_ref,
             allowed_origins,
             log_filter: env_or("RUST_LOG", "assistant_server=debug,tower_http=debug,info"),
             max_tool_rounds: env_or("ASSISTANT_MAX_TOOL_ROUNDS", "4")
@@ -166,6 +185,7 @@ impl Config {
             google_client_secret,
             google_redirect_uri,
             credential_encryption_key,
+            allow_dev_auth,
             document_storage_dir: PathBuf::from(env_or(
                 "ASSISTANT_DOCUMENT_STORAGE_DIR",
                 "./data/documents",
@@ -183,20 +203,55 @@ impl Config {
         })
     }
 
+    /// Rejects a configuration that would silently run on a development-only
+    /// security default.
+    ///
+    /// Pure, and separate from `from_env`, so it can be unit-tested without
+    /// mutating process-wide environment variables -- which these tests avoid
+    /// because they run concurrently in one process. See ADR-0039.
+    pub fn validate_security(
+        supabase_project_ref: Option<&str>,
+        credential_encryption_key: Option<&str>,
+        allow_dev_auth: bool,
+    ) -> Result<(), ConfigError> {
+        // A malformed key is always an error. Accepting it silently is worse
+        // than accepting none: the operator sets the variable, sees a running
+        // server, and believes it took effect.
+        if let Some(key) = credential_encryption_key
+            && parse_encryption_key(key).is_none()
+        {
+            return Err(ConfigError::Invalid {
+                name: "CREDENTIAL_ENCRYPTION_KEY",
+                reason: "must be 64 hex characters or exactly 32 bytes".into(),
+            });
+        }
+
+        if allow_dev_auth {
+            return Ok(());
+        }
+
+        if supabase_project_ref.is_none() {
+            return Err(ConfigError::Missing("SUPABASE_PROJECT_REF"));
+        }
+        if credential_encryption_key.is_none() {
+            return Err(ConfigError::Missing("CREDENTIAL_ENCRYPTION_KEY"));
+        }
+        Ok(())
+    }
+
     /// Resolves the 32-byte credential encryption key.
     /// If CREDENTIAL_ENCRYPTION_KEY is provided (hex or 32-byte ascii), it decodes it.
     /// If absent, falls back to a deterministic development key with a warning.
     pub fn resolved_encryption_key(&self) -> [u8; 32] {
-        if let Some(ref key_str) = self.credential_encryption_key {
-            if let Some(bytes) = decode_hex_32(key_str) {
-                return bytes;
-            }
-            if key_str.len() == 32 {
-                let mut key = [0u8; 32];
-                key.copy_from_slice(key_str.as_bytes());
-                return key;
-            }
+        if let Some(bytes) = self
+            .credential_encryption_key
+            .as_deref()
+            .and_then(parse_encryption_key)
+        {
+            return bytes;
         }
+        // Unreachable unless `allow_dev_auth` is set: `validate_security`
+        // refuses to build a `Config` that would land here (ADR-0039).
         tracing::warn!(
             "CREDENTIAL_ENCRYPTION_KEY is unset or invalid; using development fallback key"
         );
@@ -252,6 +307,21 @@ impl Config {
     pub fn migrations_dir() -> PathBuf {
         PathBuf::from("migrations")
     }
+}
+
+/// Accepts 64 hex characters or exactly 32 raw bytes. The single definition of
+/// what a valid `CREDENTIAL_ENCRYPTION_KEY` is, so startup validation and key
+/// resolution cannot disagree.
+fn parse_encryption_key(key: &str) -> Option<[u8; 32]> {
+    if let Some(bytes) = decode_hex_32(key) {
+        return Some(bytes);
+    }
+    if key.len() == 32 {
+        let mut out = [0u8; 32];
+        out.copy_from_slice(key.as_bytes());
+        return Some(out);
+    }
+    None
 }
 
 fn decode_hex_32(s: &str) -> Option<[u8; 32]> {
@@ -328,7 +398,81 @@ impl fmt::Debug for Config {
                     .as_ref()
                     .map(|_| "<redacted>"),
             )
+            .field("allow_dev_auth", &self.allow_dev_auth)
             .field("document_storage_dir", &self.document_storage_dir)
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const HEX_KEY: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const RAW_KEY: &str = "dev_credential_key_32_bytes_ok!!";
+
+    /// The M13 regression. A deployment that sets neither `SUPABASE_PROJECT_REF`
+    /// nor the opt-in used to boot on `DevTokenVerifier`, which authenticates
+    /// every caller as one fixed user. It must now refuse (ADR-0039).
+    #[test]
+    fn a_missing_supabase_project_is_refused_without_the_opt_in() {
+        let error = Config::validate_security(None, Some(HEX_KEY), false)
+            .expect_err("a missing project ref must not silently select the dev verifier");
+        assert!(matches!(
+            error,
+            ConfigError::Missing("SUPABASE_PROJECT_REF")
+        ));
+    }
+
+    /// The other half: falling back to a key that is a constant in public source
+    /// would let anyone forge the OAuth `state` the unauthenticated callback
+    /// trusts.
+    #[test]
+    fn a_missing_encryption_key_is_refused_without_the_opt_in() {
+        let error = Config::validate_security(Some("abcdefg"), None, false)
+            .expect_err("a missing key must not silently select the development fallback");
+        assert!(matches!(
+            error,
+            ConfigError::Missing("CREDENTIAL_ENCRYPTION_KEY")
+        ));
+    }
+
+    /// A set-but-unparseable key is an error even under the opt-in: the operator
+    /// believes the value took effect, and it did not.
+    #[test]
+    fn a_malformed_encryption_key_is_refused_even_with_the_opt_in() {
+        for allow_dev_auth in [false, true] {
+            let error = Config::validate_security(Some("proj"), Some("too-short"), allow_dev_auth)
+                .expect_err("a malformed key must never fall through to the fallback");
+            assert!(matches!(
+                error,
+                ConfigError::Invalid {
+                    name: "CREDENTIAL_ENCRYPTION_KEY",
+                    ..
+                }
+            ));
+        }
+    }
+
+    #[test]
+    fn the_opt_in_permits_the_development_defaults() {
+        Config::validate_security(None, None, true).expect("offline development stays possible");
+    }
+
+    #[test]
+    fn a_fully_configured_deployment_passes() {
+        Config::validate_security(Some("proj"), Some(HEX_KEY), false).expect("valid");
+        Config::validate_security(Some("proj"), Some(RAW_KEY), false).expect("valid");
+    }
+
+    #[test]
+    fn both_key_encodings_parse_and_hex_wins_on_length() {
+        assert_eq!(parse_encryption_key(HEX_KEY).expect("hex")[0], 0x01);
+        assert_eq!(
+            parse_encryption_key(RAW_KEY).expect("raw"),
+            *b"dev_credential_key_32_bytes_ok!!"
+        );
+        assert!(parse_encryption_key("short").is_none());
+        assert!(parse_encryption_key(&"z".repeat(64)).is_none());
     }
 }

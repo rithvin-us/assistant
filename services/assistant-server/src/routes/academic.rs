@@ -36,7 +36,7 @@ fn db(state: &SharedState) -> Result<&sqlx::PgPool, AppError> {
     state
         .db
         .as_ref()
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("database unavailable")))
+        .ok_or_else(|| AppError::DependencyUnavailable("the database"))
 }
 
 /// Maps a provider error to a status.

@@ -60,11 +60,36 @@ where
     Deserialize::deserialize(deserializer).map(Some)
 }
 
+/// Verifies that a client-supplied `task_id` belongs to the caller.
+///
+/// `reminders.task_id` has a foreign key to `tasks(id)` and nothing more, so
+/// without this a caller could attach a reminder to another user's task. The
+/// FK would accept it, and the difference between "accepted" and "violates the
+/// foreign key" is an oracle for which task ids exist. Absent is fine; present
+/// and not yours is `NotFound`, the same answer as present and non-existent.
+async fn verify_task_ownership(
+    pool: &PgPool,
+    user_id: uuid::Uuid,
+    task_id: Option<uuid::Uuid>,
+) -> Result<(), AppError> {
+    let Some(task_id) = task_id else {
+        return Ok(());
+    };
+    sqlx::query("select 1 from tasks where id = $1 and user_id = $2")
+        .bind(task_id)
+        .bind(user_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(db_error)?
+        .map(|_| ())
+        .ok_or(AppError::NotFound)
+}
+
 fn db_pool(state: &SharedState) -> Result<&PgPool, AppError> {
     state
         .db
         .as_ref()
-        .ok_or_else(|| AppError::Internal(anyhow::anyhow!("database unavailable")))
+        .ok_or_else(|| AppError::DependencyUnavailable("the database"))
 }
 
 /// Neutralises `ilike` metacharacters in a user-supplied search term.
@@ -1029,6 +1054,7 @@ pub async fn create_reminder(
 ) -> Result<Json<ReminderItem>, AppError> {
     let pool = db_pool(&state)?;
     ensure_user(pool, principal.user_id).await?;
+    verify_task_ownership(pool, principal.user_id, input.task_id).await?;
 
     let row = sqlx::query(
         "insert into reminders (id, user_id, title, remind_at, task_id, status)
@@ -1072,6 +1098,12 @@ pub async fn update_reminder(
     let Some(current) = current_row else {
         return Err(AppError::NotFound);
     };
+
+    // The update rewrites `task_id` from client input, so it needs the same
+    // proof the insert does.
+    if let Some(task_id) = input.task_id {
+        verify_task_ownership(pool, principal.user_id, task_id).await?;
+    }
 
     let task_id: Option<Uuid> = match input.task_id {
         Some(val) => val,

@@ -19,6 +19,11 @@ pub enum AppError {
     NotFound,
     #[error("invalid request: {0}")]
     BadRequest(String),
+    /// A dependency this request needs is not available -- most often the
+    /// database. Distinct from `Internal` because it is not a bug in this
+    /// server and a retry may succeed, which a client cannot infer from a 500.
+    #[error("{0} is unavailable")]
+    DependencyUnavailable(&'static str),
     /// Anything unexpected. The cause is logged, never returned.
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
@@ -30,6 +35,9 @@ impl AppError {
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            Self::DependencyUnavailable(_) => {
+                (StatusCode::SERVICE_UNAVAILABLE, "dependency_unavailable")
+            }
             Self::Internal(_) => (StatusCode::INTERNAL_SERVER_ERROR, "internal"),
         }
     }
@@ -57,5 +65,50 @@ impl IntoResponse for AppError {
             }),
         )
             .into_response()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M13 regression. A database outage used to surface as 500 `internal`,
+    /// which tells a client "this server is broken" when the truth is "a
+    /// dependency is down and a retry may succeed". The two must not share a
+    /// code.
+    #[test]
+    fn a_missing_dependency_is_503_and_not_an_internal_error() {
+        let (status, code) = AppError::DependencyUnavailable("the database").parts();
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(code, "dependency_unavailable");
+
+        let (internal_status, internal_code) = AppError::Internal(anyhow::anyhow!("boom")).parts();
+        assert_ne!(status, internal_status);
+        assert_ne!(code, internal_code);
+    }
+
+    /// Every arm maps to a distinct machine-readable code, so a client never
+    /// has to parse the human-readable message to tell them apart.
+    #[test]
+    fn every_error_has_its_own_code() {
+        let codes = [
+            AppError::Unauthorized.parts().1,
+            AppError::NotFound.parts().1,
+            AppError::BadRequest(String::new()).parts().1,
+            AppError::DependencyUnavailable("x").parts().1,
+            AppError::Internal(anyhow::anyhow!("x")).parts().1,
+        ];
+        let mut unique = codes.to_vec();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), codes.len(), "codes collide: {codes:?}");
+    }
+
+    /// The dependency name is a `&'static str` chosen in this crate, never a
+    /// formatted cause, so a connection string cannot reach a response body.
+    #[test]
+    fn a_dependency_message_carries_no_cause() {
+        let message = AppError::DependencyUnavailable("the database").to_string();
+        assert_eq!(message, "the database is unavailable");
     }
 }

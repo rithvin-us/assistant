@@ -481,12 +481,19 @@ impl GoogleClient {
         // If token expires in less than 60 seconds, refresh it
         if now + 60 >= tokens.expires_at {
             let Some(ref refresh_token) = tokens.refresh_token else {
-                let _ = sqlx::query(
+                if let Err(error) = sqlx::query(
                     "UPDATE connected_accounts SET status = 'disconnected', updated_at = NOW() WHERE id = $1"
                 )
                 .bind(account_id)
                 .execute(&self.pool)
-                .await;
+                .await
+                {
+                    tracing::error!(
+                        %account_id,
+                        error = %error,
+                        "could not mark a credential-less account disconnected; it will keep being offered"
+                    );
+                }
                 return Err(ToolError::Failed(
                     "Token expired and no refresh token available".into(),
                 ));
@@ -518,12 +525,19 @@ impl GoogleClient {
                 .map_err(|e| ToolError::Failed(e.to_string()))?;
 
             if !resp.status().is_success() {
-                let _ = sqlx::query(
+                if let Err(error) = sqlx::query(
                     "UPDATE connected_accounts SET status = 'error', updated_at = NOW() WHERE id = $1"
                 )
                 .bind(account_id)
                 .execute(&self.pool)
-                .await;
+                .await
+                {
+                    tracing::error!(
+                        %account_id,
+                        error = %error,
+                        "could not mark an account with a failed refresh as errored; it will keep being offered"
+                    );
+                }
                 return Err(ToolError::Failed(
                     "Failed to refresh Google token; re-authentication required".into(),
                 ));
@@ -624,7 +638,7 @@ impl GmailProvider for GoogleClient {
         for mref in refs {
             let meta_url = format!(
                 "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=To&metadataHeaders=Date",
-                mref.id
+                url_encode_path(&mref.id)
             );
 
             let meta_resp = match self.http.get(&meta_url).bearer_auth(&token).send().await {
@@ -716,7 +730,8 @@ impl GmailProvider for GoogleClient {
             .await?;
 
         let url = format!(
-            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}?format=full"
+            "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}?format=full",
+            url_encode_path(message_id)
         );
 
         let resp = self
@@ -773,7 +788,8 @@ impl GmailProvider for GoogleClient {
         // If unread, remove UNREAD label on Gmail server
         if is_unread {
             let modify_url = format!(
-                "https://gmail.googleapis.com/gmail/v1/users/me/messages/{message_id}/modify"
+                "https://gmail.googleapis.com/gmail/v1/users/me/messages/{}/modify",
+                url_encode_path(message_id)
             );
             let _ = self
                 .http
@@ -1044,8 +1060,10 @@ impl CalendarProvider for GoogleClient {
             body.insert("end".into(), serde_json::json!({ "dateTime": s }));
         }
 
-        let url =
-            format!("https://www.googleapis.com/calendar/v3/calendars/primary/events/{event_id}");
+        let url = format!(
+            "https://www.googleapis.com/calendar/v3/calendars/primary/events/{}",
+            url_encode_path(event_id)
+        );
 
         let resp = self
             .http
@@ -1082,8 +1100,10 @@ impl CalendarProvider for GoogleClient {
             .get_access_token_with_required_scope(user_id, account_id, Some("calendar.events"))
             .await?;
 
-        let url =
-            format!("https://www.googleapis.com/calendar/v3/calendars/primary/events/{event_id}");
+        let url = format!(
+            "https://www.googleapis.com/calendar/v3/calendars/primary/events/{}",
+            url_encode_path(event_id)
+        );
 
         let resp = self
             .http
@@ -1177,6 +1197,16 @@ fn map_google_event(account_id: Uuid, item: GoogleEventItem) -> CalendarEvent {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Percent-encodes a value that is interpolated into a URL *path*.
+///
+/// Ids reaching these paths can come from model output, and `url_encode` maps a
+/// space to `+`, which is a query-string convention and wrong in a path. Both
+/// encode `/`, which is what actually stops an id from adding path segments and
+/// aiming a caller's OAuth bearer at an endpoint the tool never declared.
+pub(crate) fn url_encode_path(input: &str) -> String {
+    url_encode(input).replace('+', "%20")
+}
+
 pub(crate) fn url_encode(input: &str) -> String {
     let mut out = String::new();
     for b in input.bytes() {
@@ -1241,4 +1271,43 @@ fn decode_base64(input: &str) -> Vec<u8> {
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// M13 regression. Message and event ids reach these URLs from model output.
+    /// They used to be interpolated into the path raw, while every query
+    /// parameter in this file was encoded -- so a crafted id could add path
+    /// segments and point the caller's OAuth bearer at an endpoint the tool
+    /// never declared.
+    #[test]
+    fn a_path_id_cannot_add_a_path_segment() {
+        let encoded = url_encode_path("../../../users/me/profile");
+        assert!(!encoded.contains('/'), "slash survived: {encoded}");
+        assert_eq!(url_encode_path("a/b"), "a%2Fb");
+    }
+
+    /// A space is `%20` in a path, not `+` -- that is a query-string
+    /// convention, and `url_encode` applies it because it was written for query
+    /// strings.
+    #[test]
+    fn a_path_encodes_a_space_as_percent_twenty() {
+        assert_eq!(url_encode_path("a b"), "a%20b");
+        assert_eq!(url_encode("a b"), "a+b");
+    }
+
+    /// Ordinary Google ids must pass through untouched, or every read breaks.
+    #[test]
+    fn a_normal_google_id_is_unchanged() {
+        for id in ["18f9c2b4a1d0e5f7", "abc-DEF_123.xyz~", "AAMkAGI2TG93AAA="] {
+            let encoded = url_encode_path(id);
+            if id.ends_with('=') {
+                assert_eq!(encoded, "AAMkAGI2TG93AAA%3D");
+            } else {
+                assert_eq!(encoded, id, "id was altered: {id}");
+            }
+        }
+    }
 }

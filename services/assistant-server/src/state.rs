@@ -47,8 +47,29 @@ pub struct AppState {
     pub voice_rate_limiter: Arc<crate::rate_limit::RateLimiter>,
 }
 
+/// How long the readiness probe waits for the database before calling it
+/// unready. Short, because readiness is polled.
+const READINESS_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 impl AppState {
-    pub fn is_healthy(&self) -> bool {
-        self.db.is_some()
+    /// Whether the database is configured *and* answering right now.
+    ///
+    /// This replaces an earlier `is_healthy` that returned `self.db.is_some()`.
+    /// That only proved a pool had been constructed at boot, so a database that
+    /// fell over afterwards still reported healthy -- the process was alive and
+    /// the endpoint said so, which is the failure this asks a real question to
+    /// avoid.
+    pub async fn is_ready(&self) -> bool {
+        let Some(pool) = self.db.as_ref() else {
+            return false;
+        };
+        matches!(
+            tokio::time::timeout(
+                READINESS_PROBE_TIMEOUT,
+                sqlx::query("select 1").execute(pool)
+            )
+            .await,
+            Ok(Ok(_))
+        )
     }
 }
