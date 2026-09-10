@@ -49,6 +49,6 @@ pub struct AppState {
 
 impl AppState {
     pub fn is_healthy(&self) -> bool {
-        true
+        self.db.is_some()
     }
 }

@@ -174,10 +174,9 @@ pub async fn oauth_callback(
         }
     };
 
-    let redirect_uri = state
-        .google_redirect_uri
-        .clone()
-        .unwrap_or_else(|| "http://localhost:8787/v1/auth/google/callback".into());
+    let redirect_uri = state.google_redirect_uri.clone().unwrap_or_else(|| {
+        "https://assistant-server-vbrv.onrender.com/v1/auth/google/callback".into()
+    });
 
     match client.exchange_code(user_id, &code, &redirect_uri).await {
         Ok(acc) => (

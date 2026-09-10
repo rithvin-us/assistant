@@ -24,16 +24,8 @@ import SchoolOutlinedIcon from "@mui/icons-material/SchoolOutlined";
 import GraphicEqRoundedIcon from "@mui/icons-material/GraphicEqRounded";
 import CloseRoundedIcon from "@mui/icons-material/CloseRounded";
 
-import { useState } from "react";
-import TextField from "@mui/material/TextField";
-import Button from "@mui/material/Button";
-import EditRoundedIcon from "@mui/icons-material/EditRounded";
 import {
   getServerBaseUrl,
-  setServerBaseUrl,
-  isLocalServer,
-  PROD_SERVER_URL,
-  DEV_SERVER_URL,
   type ConnectionState,
 } from "../api/bridge";
 import type { ScreenType } from "../App";
@@ -49,15 +41,6 @@ export default function MoreSheet({
   connection: ConnectionState;
   onSelectScreen: (screen: ScreenType) => void;
 }) {
-  const [editingUrl, setEditingUrl] = useState(false);
-  const [urlInput, setUrlInput] = useState(getServerBaseUrl());
-  const isLocal = isLocalServer();
-
-  const handleSaveUrl = () => {
-    setServerBaseUrl(urlInput);
-    setEditingUrl(false);
-    window.location.reload();
-  };
 
 
   const FEATURES = [
@@ -222,21 +205,9 @@ export default function MoreSheet({
             mb: 0.5,
           }}
         >
-          <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
-            <Typography variant="caption" sx={{ color: "#888888", fontWeight: 600 }}>
-              Server: {getServerBaseUrl()}
-            </Typography>
-            {isLocal && (
-              <IconButton
-                size="small"
-                onClick={() => setEditingUrl(!editingUrl)}
-                sx={{ p: 0.25, color: "#7C3AED" }}
-                title="Edit Local Server URL"
-              >
-                <EditRoundedIcon sx={{ fontSize: 16 }} />
-              </IconButton>
-            )}
-          </Box>
+          <Typography variant="caption" sx={{ color: "#888888", fontWeight: 600 }}>
+            Server: {getServerBaseUrl()}
+          </Typography>
           <Chip
             size="small"
             label={connection.kind}
@@ -245,50 +216,6 @@ export default function MoreSheet({
             sx={{ height: 20, fontSize: "0.7rem", fontWeight: 600 }}
           />
         </Box>
-
-        {editingUrl && (
-          <Box sx={{ display: "flex", flexDirection: "column", gap: 1, mt: 1 }}>
-            <Box sx={{ display: "flex", gap: 1 }}>
-              <TextField
-                size="small"
-                fullWidth
-                value={urlInput}
-                onChange={(e) => setUrlInput(e.target.value)}
-                placeholder="http://192.168.137.1:8787"
-                sx={{ "& input": { fontSize: "0.85rem", py: 0.75 } }}
-              />
-              <Button variant="contained" size="small" onClick={handleSaveUrl} sx={{ bgcolor: "#7C3AED" }}>
-                Save
-              </Button>
-            </Box>
-            <Box sx={{ display: "flex", gap: 1 }}>
-              <Button
-                variant="outlined"
-                size="small"
-                fullWidth
-                onClick={() => {
-                  setServerBaseUrl(PROD_SERVER_URL);
-                  window.location.reload();
-                }}
-                sx={{ fontSize: "0.75rem" }}
-              >
-                Use Cloud Server
-              </Button>
-              <Button
-                variant="outlined"
-                size="small"
-                fullWidth
-                onClick={() => {
-                  setServerBaseUrl(DEV_SERVER_URL);
-                  window.location.reload();
-                }}
-                sx={{ fontSize: "0.75rem" }}
-              >
-                Use Local Host
-              </Button>
-            </Box>
-          </Box>
-        )}
 
         <Typography variant="caption" sx={{ color: "#AAAAAA", fontSize: "0.7rem", display: "block", mt: 0.5 }}>
           {connection.detail}

@@ -143,7 +143,11 @@ pub fn router(state: SharedState) -> Router {
         // Documents (M8)
         .route(
             "/v1/documents",
-            get(documents::list_documents).post(documents::upload_document),
+            get(documents::list_documents)
+                .post(documents::upload_document)
+                .layer(DefaultBodyLimit::max(
+                    (assistant_documents::MAX_DOCUMENT_BYTES + 1024 * 1024) as usize,
+                )),
         )
         .route(
             "/v1/documents/{id}",

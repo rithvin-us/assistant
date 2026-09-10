@@ -19,8 +19,7 @@ A voice-first personal assistant. Rust backend, Tauri 2 + React mobile app, Post
 - **Google Drive (read-only):** Search by name and MIME type, browse folders, read metadata, and open small text files. Oversized, binary and PDF files are refused with a reason instead of being partially read. Nothing from Drive is mirrored into Postgres.
 - **Coursework to Tasks:** Assignments import into the normal task list with their origin recorded. Repeated syncs update rather than duplicate, a moved deadline moves the same task, and a title you edited is never overwritten.
 - **Academic Overview:** Counts of what is due this week and what is overdue, the nearest deadlines across every source, and recent announcements — all counted from rows, with no model involved.
-- **Pure Light Theme Mobile Screens:** Dedicated Connections, Gmail, Calendar, Classroom, Drive and Academic screens alongside Tasks, Notes, and the conversational assistant.
-- **Local Voice STT & Flexible Server Connection:** Hands-free voice input with real-time Web Speech API local transcription (interim result streaming) and one-tap in-app server switching between Cloud Server and Local Host endpoints.
+- **Voice Interaction & Cloud Server:** Hands-free voice input and responses powered by Cartesia and cloud speech processing, strictly connected to the deployed Render cloud backend.
 - **Gemini & Anthropic Model Providers:** Route LLM turns to Gemini or Anthropic models behind the vendor-neutral `ModelProvider` trait, complete with zero-cost Google TTS fallback for voice responses.
 - **Conversations persist in PostgreSQL** scoped strictly to the authenticated user.
 - **Durable approvals, executions, and audit trail** (M3), preserving authoritative security.

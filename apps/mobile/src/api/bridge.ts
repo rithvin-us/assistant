@@ -28,46 +28,26 @@ export const isTauri =
  * physical-device dev builds against a LAN address, or against a staging URL.
  */
 export const PROD_SERVER_URL = "https://assistant-server-vbrv.onrender.com";
-export const DEV_SERVER_URL = "http://192.168.137.1:8787";
 
 export function getServerBaseUrl(): string {
   if (typeof window !== "undefined") {
+    // Purge any legacy local server entries from localStorage
     const saved = localStorage.getItem("ASSISTANT_SERVER_URL");
-    if (saved && (saved.includes("192.168.137.1") || saved.includes("127.0.0.1") || saved.includes("localhost"))) {
+    if (saved && (saved.includes("192.168.") || saved.includes("127.0.0.1") || saved.includes("localhost") || saved.includes("10.") || saved.startsWith("http://"))) {
       localStorage.removeItem("ASSISTANT_SERVER_URL");
-      return import.meta.env.VITE_SERVER_BASE_URL || PROD_SERVER_URL;
-    }
-    if (saved && saved.trim().length > 0) {
-      return saved.trim().replace(/\/+$/, "");
     }
   }
   return import.meta.env.VITE_SERVER_BASE_URL || PROD_SERVER_URL;
 }
 
-export function setServerBaseUrl(url: string): void {
+export function setServerBaseUrl(): void {
   if (typeof window !== "undefined") {
-    const trimmed = url ? url.trim().replace(/\/+$/, "") : "";
-    if (trimmed && trimmed !== PROD_SERVER_URL) {
-      localStorage.setItem("ASSISTANT_SERVER_URL", trimmed);
-    } else {
-      localStorage.removeItem("ASSISTANT_SERVER_URL");
-    }
+    localStorage.removeItem("ASSISTANT_SERVER_URL");
   }
 }
 
-/**
- * Returns true if the target server URL is a local network address or local dev environment.
- * The pencil editor is only displayed when connecting to a local dev server.
- */
-export function isLocalServer(url?: string): boolean {
-  const target = (url || getServerBaseUrl()).toLowerCase();
-  return (
-    target.startsWith("http://127.") ||
-    target.startsWith("http://localhost") ||
-    target.startsWith("http://192.168.") ||
-    target.startsWith("http://10.") ||
-    target.startsWith("http://0.0.0.0")
-  );
+export function isLocalServer(): boolean {
+  return false;
 }
 
 export const SERVER_BASE_URL: string = getServerBaseUrl();
